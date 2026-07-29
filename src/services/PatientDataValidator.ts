@@ -13,7 +13,8 @@ export function validatePatientData(data: any) {
   const warnings: string[] = [];
 
   if (!result.success) {
-    errors.push(...result.error.errors.map(e => `${e.path.join('.')}: ${e.message}`));
+    const errorResult = result as any;
+    errors.push(...errorResult.error.issues.map((e: any) => `${e.path.join('.')}: ${e.message}`));
   } else {
     // Logical BMI check
     const bmi = data.weight / Math.pow(data.height / 100, 2);

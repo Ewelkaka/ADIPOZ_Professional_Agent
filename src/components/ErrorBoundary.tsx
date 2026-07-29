@@ -43,7 +43,7 @@ export default class ErrorBoundary extends Component<Props, State> {
               Przepraszamy, coś poszło nie tak. Spróbuj odświeżyć stronę lub wrócić do panelu głównego.
             </p>
             
-            {process.env.NODE_ENV !== 'production' && this.state.error && (
+            {(import.meta as any).env?.DEV && this.state.error && (
               <div className="mb-8 p-4 bg-slate-100 rounded-lg text-left overflow-auto max-h-40">
                 <p className="text-xs font-mono text-red-600 break-all">
                   {this.state.error.toString()}

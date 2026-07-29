@@ -29,7 +29,7 @@ export default function App() {
   }, [patientInfo.weight, patientInfo.height]);
   const [symptoms, setSymptoms] = useState('');
   const [medications, setMedications] = useState('');
-  const [vitals, setVitals] = useState({ temp: 36.6, bp: '120/80', allergies: [] });
+  const [vitals, setVitals] = useState<{ temp: number; bp: string; pulse?: number; allergies: any[] }>({ temp: 36.6, bp: '120/80', pulse: 72, allergies: [] });
   const [analysis, setAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -248,7 +248,7 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-3 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                         Temperatura ({settings.units === 'metric' ? '°C' : '°F'})
@@ -257,18 +257,29 @@ export default function App() {
                         type="number" 
                         step="0.1"
                         value={vitals.temp}
-                        onChange={(e) => setVitals({...vitals, temp: parseFloat(e.target.value)})}
+                        onChange={(e) => setVitals({...vitals, temp: parseFloat(e.target.value) || 36.6})}
                         className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
                       />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                        Ciśnienie ({settings.units === 'metric' ? 'mmHg' : 'psi'})
+                        Ciśnienie (mmHg)
                       </label>
                       <input 
                         type="text" 
                         value={vitals.bp}
                         onChange={(e) => setVitals({...vitals, bp: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                        Tętno (BPM)
+                      </label>
+                      <input 
+                        type="number" 
+                        value={vitals.pulse || ''}
+                        onChange={(e) => setVitals({...vitals, pulse: parseInt(e.target.value) || undefined})}
                         className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
                       />
                     </div>
@@ -618,6 +629,8 @@ export default function App() {
             patientInfo={patientInfo} 
             analysis={analysis} 
             patientHistory={patientHistory}
+            vitals={vitals}
+            onUpdateVitals={setVitals}
           />
         ) : (
           <div className="h-[calc(100vh-160px)] bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">

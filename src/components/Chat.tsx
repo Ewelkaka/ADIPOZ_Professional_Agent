@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { Send, Stethoscope, Search, MapPin, Loader2, Copy, Check, Trash2, Mic, Square, Pill, FileText, AlertCircle, Activity, FilePlus, User, FileCode, ShieldAlert, HeartPulse, Printer, FileText as FileTextIcon, Scale, TrendingUp, Zap, Sparkles, Shield, Plus, ListPlus } from "lucide-react";
+import { ClinicalAlertEngine, ClinicalAlert, AlertSeverity } from "../services/ClinicalAlertEngine";
 import ReactMarkdown from "react-markdown";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { streamChatResponse, ChatMode } from "../services/gemini";
@@ -11,6 +12,280 @@ import { cn } from "../lib/utils";
 import QuickActions, { CopyButton } from "./QuickActions";
 
 const sovereignEngine = new SovereignEngine();
+
+const handlePrintSummaryAndNote = (dataToPrint: any) => {
+  if (!dataToPrint) {
+    alert("Brak danych wizyty do wydruku. Najpierw wygeneruj podsumowanie podając dane pacjenta i objawy.");
+    return;
+  }
+
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document || iframe.contentDocument;
+  if (!doc) {
+    alert("Nie udało się zainicjować drukowania nadrzędnego.");
+    return;
+  }
+
+  const currentDate = new Date().toLocaleString("pl-PL");
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="pl">
+    <head>
+      <meta charset="utf-8">
+      <title>Notatka Medyczna z Wizyty - AdiPOZ</title>
+      <style>
+        body {
+          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+          color: #1e293b;
+          line-height: 1.5;
+          padding: 30px;
+          margin: 0;
+          background: #ffffff;
+        }
+        .header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 2px solid #059669;
+          padding-bottom: 12px;
+          margin-bottom: 25px;
+        }
+        .header h1 {
+          color: #047857;
+          margin: 0;
+          font-size: 24px;
+          font-weight: 800;
+          letter-spacing: -0.025em;
+        }
+        .header .meta {
+          text-align: right;
+          font-size: 11px;
+          color: #64748b;
+        }
+        .section {
+          margin-bottom: 22px;
+        }
+        .section-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: #1e293b;
+          border-bottom: 1px solid #e2e8f0;
+          padding-bottom: 4px;
+          margin-bottom: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .section-content {
+          font-size: 13px;
+          color: #334155;
+          white-space: pre-wrap;
+          text-align: justify;
+        }
+        .grid {
+          display: grid;
+          grid-template-cols: 1fr 1fr;
+          gap: 16px;
+          margin-bottom: 22px;
+        }
+        .card {
+          background-color: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 6px;
+          padding: 12px;
+        }
+        .card-title {
+          font-weight: 700;
+          font-size: 11px;
+          color: #475569;
+          margin-bottom: 6px;
+          text-transform: uppercase;
+          letter-spacing: 0.025em;
+        }
+        .footer {
+          margin-top: 40px;
+          border-top: 1px solid #e2e8f0;
+          padding-top: 12px;
+          text-align: center;
+          font-size: 10px;
+          color: #94a3b8;
+        }
+        .signature-area {
+          margin-top: 50px;
+          display: flex;
+          justify-content: flex-end;
+        }
+        .signature-box {
+          border-top: 1px dashed #94a3b8;
+          width: 180px;
+          text-align: center;
+          padding-top: 4px;
+          font-size: 11px;
+          color: #64748b;
+        }
+        .badge {
+          display: inline-block;
+          background: #f1f5f9;
+          color: #334155;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 600;
+          margin-right: 4px;
+          border: 1px solid #e2e8f0;
+        }
+        .alert-badge {
+          background-color: #fef2f2;
+          color: #991b1b;
+          border: 1px solid #fca5a5;
+        }
+        @media print {
+          @page {
+            size: A4;
+            margin: 15mm;
+          }
+          body {
+            padding: 0;
+          }
+          .no-print {
+            display: none;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div>
+          <h1>AdiPOZ</h1>
+          <div style="font-size: 12px; color: #475569; margin-top: 1px; font-weight: 500;">Szpitalny & POZ Asystent Medyczny Decyzji Klinicznych</div>
+        </div>
+        <div class="meta">
+          <div><strong>Data sporządzenia:</strong> ${currentDate}</div>
+          <div><strong>Status dokumentu:</strong> Oryginał (Podsumowanie)</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">1. Podsumowanie Kliniczne Wizyty</div>
+        <div class="section-content">
+          ${dataToPrint.podsumowanie_wizyty || "Brak sporządzonego klinicznego podsumowania wizyty."}
+        </div>
+      </div>
+
+      ${dataToPrint.podsumowanie_leczenia ? `
+      <div class="section">
+        <div class="section-title">2. Podsumowanie i Plan Terapii</div>
+        <div class="section-content">
+          ${dataToPrint.podsumowanie_leczenia}
+        </div>
+      </div>
+      ` : ''}
+
+      <div class="grid">
+        ${dataToPrint.kody_rozliczeniowe ? `
+        <div class="card">
+          <div class="card-title">Klasyfikacja NFZ (Rozliczenia)</div>
+          <div style="font-size: 12px; color: #334155;">
+            <p style="margin: 3px 0;"><strong>ICD-10 (Rozpoznania):</strong></p>
+            <div style="margin: 4px 0 8px 0;">
+              ${dataToPrint.kody_rozliczeniowe["ICD-10"]?.map((c: string) => `<span class="badge">${c}</span>`).join('') || '—'}
+            </div>
+            <p style="margin: 3px 0;"><strong>ICD-9 (Procedury):</strong></p>
+            <div style="margin: 4px 0 8px 0;">
+              ${dataToPrint.kody_rozliczeniowe["ICD-9"]?.map((c: string) => `<span class="badge">${c}</span>`).join('') || '—'}
+            </div>
+            <p style="margin: 8px 0 0 0; font-size: 11px; color: #64748b; font-style: italic; line-height: 1.3;">
+              <strong>Medyczne Uzasadnienie:</strong> ${dataToPrint.kody_rozliczeniowe.Uzasadnienie || '—'}
+            </p>
+          </div>
+        </div>
+        ` : ''}
+
+        ${dataToPrint.bezpieczenstwo_lekowe ? `
+        <div class="card">
+          <div class="card-title">Farmakoterapia & Bezpieczeństwo</div>
+          <div style="font-size: 12px; color: #334155; line-height: 1.4;">
+            <p style="margin: 3px 0;"><strong>Poziom ryzyka interakcji:</strong> 
+              <span class="badge alert-badge" style="text-transform: uppercase;">
+                ${dataToPrint.bezpieczenstwo_lekowe.poziom_ryzyka || 'niskie'}
+              </span>
+            </p>
+            <p style="margin: 6px 0 3px 0;"><strong>Wykryte interakcje:</strong></p>
+            <p style="margin: 0; font-size: 11.5px; color: #475569;">${dataToPrint.bezpieczenstwo_lekowe.interakcje || 'Brak krytycznych interakcji międzylekowych.'}</p>
+            <p style="margin: 6px 0 3px 0;"><strong>Dawkowanie / Wskazówki:</strong></p>
+            <p style="margin: 0; font-size: 11.5px; color: #475569;">${dataToPrint.bezpieczenstwo_lekowe.dawkowanie || 'Zgodne ze standardem klinicznym.'}</p>
+          </div>
+        </div>
+        ` : ''}
+      </div>
+
+      ${dataToPrint.opieka_koordynowana ? `
+      <div class="section">
+        <div class="section-title">3. Ścieżka Opieki Koordynowanej</div>
+        <div class="section-content" style="font-size: 12.5px;">
+          <p style="margin: 2px 0;"><strong>Profil opieki koordynowanej:</strong> <span class="badge" style="background:#eef2ff; color:#4f46e5; border-color:#c7d2fe;">${dataToPrint.opieka_koordynowana.sciezka || 'Ogólny POZ'}</span></p>
+          <p style="margin: 6px 0 0 0;"><strong>Rekomendowane konsultacje specjalistyczne i diagnostyka:</strong></p>
+          <p style="margin: 2px 0; color: #475569;">${dataToPrint.opieka_koordynowana.konsultacje || 'Brak pilnych wskazań specjalistycznych poza standardową ambulatoryjną ścieżką POZ.'}</p>
+        </div>
+      </div>
+      ` : ''}
+
+      ${dataToPrint.podsumowanie_dla_pacjenta ? `
+      <div class="section" style="page-break-before: always; margin-top: 30px; padding-top: 20px; border-top: 1px dashed #cbd5e1;">
+        <div class="section-title" style="color: #047857; border-bottom-color: #a7f3d0;">4. Zalecenia i Instrukcje dla Pacjenta (Karta Pacjenta)</div>
+        <div class="section-content" style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 16px; border-radius: 6px; color: #14532d;">
+          <p style="margin-top: 0; font-size: 13px; line-height: 1.5; font-weight: 500;">
+            ${dataToPrint.podsumowanie_dla_pacjenta.wyjasnienie || 'Zaleca się regularny tryb życia i monitorowanie podstawowych parametrów życiowych.'}
+          </p>
+          <p style="margin: 10px 0 5px 0; font-size: 12.5px;"><strong>Pilność wizyt kontrolnych / badań:</strong> <span class="badge" style="background:#ffffff; color:#15803d; border-color:#bbf7d0;">${dataToPrint.podsumowanie_dla_pacjenta.pilnosc_badan || 'Standardowa'}</span></p>
+          <p style="margin: 12px 0 4px 0; font-size: 12.5px; font-weight: 700;">Zasady postępowania i przyjmowania leków:</p>
+          <ol style="margin-bottom: 0; margin-top: 4px; padding-left: 20px; font-size: 12.5px; line-height: 1.5;">
+            ${dataToPrint.podsumowanie_dla_pacjenta.zalecenia?.map((z: string) => `<li style="margin-bottom: 4px;">${z}</li>`).join('') || '<li>Stosuj się do dotychczasowych wskazówek lekarskich.</li>'}
+          </ol>
+        </div>
+      </div>
+      ` : ''}
+
+      <div class="signature-area">
+        <div class="signature-box">
+          Podpis i pieczątka lekarza
+        </div>
+      </div>
+
+      <div class="footer">
+        Dokument wygenerowany asystencko przy użyciu oprogramowania wspomagania decyzji AdiPOZ. Ma charakter pomocniczy. Ostateczną diagnozę i decyzję terapeutyczną podejmuje lekarz ubezpieczenia zdrowotnego / prowadzący.
+      </div>
+    </body>
+    </html>
+  `;
+
+  const iframeWindow = iframe.contentWindow;
+  if (iframeWindow) {
+    doc.open();
+    doc.write(htmlContent);
+    doc.close();
+
+    setTimeout(() => {
+      iframeWindow.focus();
+      iframeWindow.print();
+      setTimeout(() => {
+        document.body.removeChild(iframe);
+      }, 1000);
+    }, 500);
+  } else {
+    alert("Nie udało się otworzyć okna wydruku.");
+    document.body.removeChild(iframe);
+  }
+};
+
 
 interface Message {
   id: string;
@@ -33,7 +308,7 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [bpAlert, setBpAlert] = useState<string | null>(null);
+  const [clinicalAlerts, setClinicalAlerts] = useState<ClinicalAlert[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
 
@@ -57,6 +332,14 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      const alerts = ClinicalAlertEngine.analyzeInput(input);
+      setClinicalAlerts(alerts);
+    }, 300); // 300ms debounce
+    return () => clearTimeout(handler);
+  }, [input]);
 
   const toggleRecording = () => {
     if (isRecording) {
@@ -156,16 +439,7 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
     };
 
     // BP Alert check
-    const bpMatch = trimmedInput.match(/(\d{2,3})\/(\d{2,3})/);
-    if (bpMatch) {
-      const sys = parseInt(bpMatch[1]);
-      const dia = parseInt(bpMatch[2]);
-      if (sys > 140 || dia > 90) {
-        setBpAlert(`${sys}/${dia}`);
-      } else {
-        setBpAlert(null);
-      }
-    }
+    // Removed: bpAlert logic moved to useEffect
 
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
@@ -387,7 +661,7 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
 
   const handleClearChat = () => {
     setMessages([]);
-    setBpAlert(null);
+    setClinicalAlerts([]);
     setError(null);
   };
 
@@ -418,13 +692,31 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
             <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => alert("Otwieram e-wizytę")}><FileText size={14} className="mr-1"/>e-Wizyta</Button>
             <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => alert("Otwieram e-skierowanie")}><FilePlus size={14} className="mr-1"/>e-Skierowanie</Button>
             <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => window.print()}><Printer size={14} className="mr-1"/>Drukuj Zalecenia dla Pacjenta</Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/40 font-semibold" 
+              onClick={() => handlePrintSummaryAndNote(lastParsedJson)}
+              disabled={!lastParsedJson}
+              title={!lastParsedJson ? "Najpierw wygeneruj wizytę za pomocą asystenta" : "Szybkie drukowanie sformatowanej karty pacjenta"}
+            >
+              <Printer size={14} className="mr-1 text-emerald-600 dark:text-emerald-400"/> Szybki Druk A4
+            </Button>
           </div>
-          {bpAlert && (
-            <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 border border-red-300 dark:border-red-800 animate-pulse ring-2 ring-red-400 ring-offset-1">
+          {clinicalAlerts.map(alert => (
+            <div 
+              key={alert.id}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 border animate-pulse ring-2 ring-offset-1",
+                alert.severity === AlertSeverity.CRITICAL 
+                  ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 ring-red-400"
+                  : "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800 ring-yellow-400"
+              )}
+            >
               <AlertCircle size={16} />
-              Alert: Ciśnienie {bpAlert} mmHg
+              {alert.message}
             </div>
-          )}
+          ))}
           <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">
             <div className="relative group">
               <button
@@ -720,9 +1012,14 @@ function MessageBubble({ message }: { message: Message }) {
                     )}
 
                     {parsedJson.podsumowanie_wizyty && (
-                      <div>
-                        <h4 className="font-semibold text-gray-800 dark:text-slate-200 flex items-center gap-2 mb-1"><FileText size={16}/> Podsumowanie wizyty</h4>
-                        <p className="text-gray-600 dark:text-slate-400 leading-relaxed">{parsedJson.podsumowanie_wizyty}</p>
+                      <div className="bg-slate-50 dark:bg-slate-800/20 p-4 rounded-xl border border-slate-200/50 dark:border-slate-800/80">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-semibold text-gray-800 dark:text-slate-200 flex items-center gap-2"><FileText size={16}/> Podsumowanie wizyty</h4>
+                          <Button size="sm" variant="outline" className="text-xs h-7 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/20 font-semibold" onClick={() => handlePrintSummaryAndNote(parsedJson)}>
+                            <Printer size={12} className="mr-1" /> Szybki Druk Karty Wizyty (A4)
+                          </Button>
+                        </div>
+                        <p className="text-gray-600 dark:text-slate-400 leading-relaxed text-sm">{parsedJson.podsumowanie_wizyty}</p>
                       </div>
                     )}
 
@@ -843,11 +1140,16 @@ function MessageBubble({ message }: { message: Message }) {
 
                     {parsedJson.podsumowanie_dla_pacjenta && (
                       <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-100 dark:border-emerald-800">
-                        <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                           <h4 className="font-semibold text-emerald-900 dark:text-emerald-300 flex items-center gap-2"><HeartPulse size={16}/> Podsumowanie dla pacjenta</h4>
-                          <Button size="sm" variant="outline" className="text-xs h-7 border-emerald-200 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30" onClick={() => window.print()}>
-                            <Printer size={12} className="mr-1" /> Drukuj Zalecenia dla Pacjenta
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" className="text-xs h-7 border-emerald-200 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30" onClick={() => window.print()}>
+                              <Printer size={12} className="mr-1" /> Drukuj Całą Stronę
+                            </Button>
+                            <Button size="sm" className="text-xs h-7 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-700 font-bold" onClick={() => handlePrintSummaryAndNote(parsedJson)}>
+                              <Printer size={12} className="mr-1" /> Szybki Druk A4 (Karta i Notatki)
+                            </Button>
+                          </div>
                         </div>
                         <div className="text-sm text-emerald-800 dark:text-emerald-400/80 space-y-2">
                           <p>{parsedJson.podsumowanie_dla_pacjenta.wyjasnienie}</p>

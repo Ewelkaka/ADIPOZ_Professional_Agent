@@ -1,5 +1,6 @@
 {
   "name": "AdiPOZ",
   "description": "Agentyczny asystent AI dla lekarzy rodzinnych (POZ) w polskim systemie ochrony zdrowia.",
-  "requestFramePermissions": ["geolocation", "microphone"]
+  "requestFramePermissions": ["geolocation", "microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
