@@ -9,6 +9,9 @@ import { WeightGoalService, WeightGoal } from '../services/WeightGoalService';
 import { WeightGoalCard } from './WeightGoalCard';
 import { BmiVarianceService } from '../services/BmiVarianceService';
 import { BmiVarianceCard } from './BmiVarianceCard';
+import { MedicationCorrelationService, MedicationEvent } from '../services/MedicationCorrelationService';
+import { CustomBmiChartDot, CustomBmiXAxisTick } from './CustomBmiChartDot';
+import { MedicationCorrelationCard } from './MedicationCorrelationCard';
 
 // Mock data generator
 const generateMockEkgData = (period: '24h' | '7d') => {
@@ -51,6 +54,11 @@ export const PatientView: React.FC<PatientViewProps> = ({
   const [ekgPeriod, setEkgPeriod] = useState<'24h' | '7d'>('24h');
   const [showGoalLine, setShowGoalLine] = useState(true);
   const [bmiVarianceThreshold, setBmiVarianceThreshold] = useState<number>(2.0);
+
+  // Stan Znaczników i Korelacji Farmakoterapii na Wykresie
+  const [showMedicationLines, setShowMedicationLines] = useState<boolean>(true);
+  const [showMedicationBadges, setShowMedicationBadges] = useState<boolean>(true);
+
   const ekgData = useMemo(() => generateMockEkgData(ekgPeriod), [ekgPeriod]);
 
   const bmiVarianceAnalysis = useMemo(() => {
@@ -95,8 +103,12 @@ export const PatientView: React.FC<PatientViewProps> = ({
       });
     }
 
-    return data;
+    return MedicationCorrelationService.enrichChartDataWithMedicationEvents(data);
   }, [patientHistory, patientInfo]);
+
+  const medicationEvents: MedicationEvent[] = useMemo(() => {
+    return MedicationCorrelationService.extractMedicationEvents(weightBmiChartData);
+  }, [weightBmiChartData]);
 
   // PPG states & ref objects for camera pulse detection
   const [isScanning, setIsScanning] = useState(false);
@@ -453,11 +465,21 @@ export const PatientView: React.FC<PatientViewProps> = ({
           onToggleReferenceLine={() => setShowGoalLine(prev => !prev)}
         />
 
-        <div className="h-64 w-full">
+        {/* Karta Korelacji Farmakoterapii ze Zmianą Wagi i BMI */}
+        <MedicationCorrelationCard
+          events={medicationEvents}
+          onNavigateToVisit={onNavigateToHistory}
+          showMedicationLines={showMedicationLines}
+          onToggleMedicationLines={() => setShowMedicationLines(prev => !prev)}
+          showMedicationBadges={showMedicationBadges}
+          onToggleMedicationBadges={() => setShowMedicationBadges(prev => !prev)}
+        />
+
+        <div className="h-80 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart 
               data={weightBmiChartData} 
-              margin={{ top: 5, right: 20, bottom: 5, left: 0 }}
+              margin={{ top: 15, right: 20, bottom: 8, left: 0 }}
               onClick={(e: any) => {
                 if (e && e.activePayload && e.activePayload.length) {
                   const pointData = e.activePayload[0].payload;
@@ -469,7 +491,20 @@ export const PatientView: React.FC<PatientViewProps> = ({
               className="cursor-pointer"
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
-              <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickMargin={10} />
+              <XAxis 
+                dataKey="date" 
+                stroke="#64748b" 
+                fontSize={11} 
+                tickMargin={6} 
+                height={46}
+                tick={(tickProps: any) => (
+                  <CustomBmiXAxisTick 
+                    {...tickProps} 
+                    data={weightBmiChartData} 
+                    onSelectVisit={onNavigateToHistory} 
+                  />
+                )}
+              />
               <YAxis 
                 yAxisId="left" 
                 stroke="#3b82f6" 
@@ -548,6 +583,25 @@ export const PatientView: React.FC<PatientViewProps> = ({
                   }} 
                 />
               )}
+              {/* Pionowe linie rozpoczęcia nowych leków (zdarzenia farmakoterapii) */}
+              {showMedicationLines && medicationEvents.map((evt, idx) => (
+                <ReferenceLine
+                  key={`med-ref-${idx}`}
+                  x={evt.date}
+                  stroke="#ec4899"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                  strokeOpacity={0.85}
+                  label={{
+                    value: `💊 ${evt.newMedications[0] || 'Lek'}`,
+                    fill: '#db2777',
+                    fontSize: 9.5,
+                    fontWeight: 700,
+                    position: 'insideTopLeft'
+                  }}
+                />
+              ))}
+
               <Line 
                 yAxisId="left" 
                 type="monotone" 
@@ -577,9 +631,16 @@ export const PatientView: React.FC<PatientViewProps> = ({
                 name="BMI" 
                 stroke="#10b981" 
                 strokeWidth={3} 
-                dot={{ r: 5, fill: '#10b981', stroke: '#ffffff', strokeWidth: 1.5, cursor: 'pointer' }} 
+                dot={(dotProps: any) => (
+                  <CustomBmiChartDot 
+                    {...dotProps} 
+                    stroke="#10b981" 
+                    onSelectVisit={onNavigateToHistory} 
+                    showMedicationBadges={showMedicationBadges} 
+                  />
+                )}
                 activeDot={{ 
-                  r: 7, 
+                  r: 8, 
                   fill: '#10b981', 
                   stroke: '#ffffff', 
                   strokeWidth: 2, 
@@ -595,8 +656,9 @@ export const PatientView: React.FC<PatientViewProps> = ({
             </LineChart>
           </ResponsiveContainer>
         </div>
-        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 px-1">
-          💡 Kliknij dowolny punkt lub chmurkę (tooltip), aby przejść do wybranej wizyty w zakładce Historia.
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 px-1 flex items-center gap-1.5 flex-wrap">
+          <span>💡 Kliknij punkt na wykresie lub etykietę leku, aby otworzyć wizytę w historii.</span>
+          <span className="text-pink-600 dark:text-pink-400 font-medium">Znaczniki 💊 wskazują momenty wdrożenia nowych leków.</span>
         </p>
       </section>
 

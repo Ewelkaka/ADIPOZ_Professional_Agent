@@ -18,6 +18,9 @@ import { WeightGoalCard } from './components/WeightGoalCard';
 import { WeightGoalModal } from './components/WeightGoalModal';
 import { BmiVarianceService, BmiVarianceAnalysis } from './services/BmiVarianceService';
 import { BmiVarianceCard } from './components/BmiVarianceCard';
+import { MedicationCorrelationService, MedicationEvent } from './services/MedicationCorrelationService';
+import { CustomBmiChartDot, CustomBmiXAxisTick } from './components/CustomBmiChartDot';
+import { MedicationCorrelationCard } from './components/MedicationCorrelationCard';
 
 const orchestrator = new SystemOrchestrator();
 const patientDB = new LocalPatientDB();
@@ -56,6 +59,10 @@ export default function App() {
 
   // Stan Wariancji i Dynamiki BMI między ostatnimi wizytami
   const [bmiVarianceThreshold, setBmiVarianceThreshold] = useState<number>(2.0);
+
+  // Stan Znaczników i Korelacji Farmakoterapii na Wykresie BMI
+  const [showMedicationLines, setShowMedicationLines] = useState<boolean>(true);
+  const [showMedicationBadges, setShowMedicationBadges] = useState<boolean>(true);
 
   const bmiVarianceAnalysis = useMemo(() => {
     return BmiVarianceService.evaluatePatientHistory(patientHistory, patientInfo, bmiVarianceThreshold);
@@ -210,8 +217,12 @@ export default function App() {
       });
     }
 
-    return data;
+    return MedicationCorrelationService.enrichChartDataWithMedicationEvents(data);
   }, [patientHistory, patientInfo, symptoms, medications]);
+
+  const medicationEvents: MedicationEvent[] = useMemo(() => {
+    return MedicationCorrelationService.extractMedicationEvents(bmiChartData);
+  }, [bmiChartData]);
 
   const targetBmi = useMemo(() => {
     if (!weightGoal?.targetWeight || !patientInfo?.height) return null;
@@ -712,12 +723,22 @@ export default function App() {
                           onToggleReferenceLine={() => setShowGoalReferenceLine(prev => !prev)}
                         />
 
+                        {/* Karta Korelacji Farmakoterapii ze Zmianą Wagi i BMI */}
+                        <MedicationCorrelationCard
+                          events={medicationEvents}
+                          onNavigateToVisit={handleNavigateToHistoryVisit}
+                          showMedicationLines={showMedicationLines}
+                          onToggleMedicationLines={() => setShowMedicationLines(prev => !prev)}
+                          showMedicationBadges={showMedicationBadges}
+                          onToggleMedicationBadges={() => setShowMedicationBadges(prev => !prev)}
+                        />
+
                         {bmiChartData.length > 0 ? (
-                          <div className="h-72 w-full">
+                          <div className="h-80 w-full">
                             <ResponsiveContainer width="100%" height="100%">
                               <LineChart 
                                 data={bmiChartData} 
-                                margin={{ top: 15, right: 35, bottom: 5, left: 10 }}
+                                margin={{ top: 15, right: 35, bottom: 8, left: 10 }}
                                 onClick={(e: any) => {
                                   if (e && e.activePayload && e.activePayload.length) {
                                     const pointData = e.activePayload[0].payload;
@@ -729,7 +750,20 @@ export default function App() {
                                 className="cursor-pointer"
                               >
                                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
-                                <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickMargin={10} />
+                                <XAxis 
+                                  dataKey="date" 
+                                  stroke="#64748b" 
+                                  fontSize={11} 
+                                  tickMargin={6} 
+                                  height={46}
+                                  tick={(tickProps: any) => (
+                                    <CustomBmiXAxisTick 
+                                      {...tickProps} 
+                                      data={bmiChartData} 
+                                      onSelectVisit={handleNavigateToHistoryVisit} 
+                                    />
+                                  )}
+                                />
                                 <YAxis 
                                   yAxisId="left" 
                                   stroke="#8b5cf6" 
@@ -896,6 +930,25 @@ export default function App() {
                                   />
                                 )}
 
+                                {/* Pionowe linie wdrożeń farmakoterapii (zdarzenia rozpoczęcia nowych leków) */}
+                                {showMedicationLines && medicationEvents.map((evt, idx) => (
+                                  <ReferenceLine
+                                    key={`med-ref-${idx}`}
+                                    x={evt.date}
+                                    stroke="#ec4899"
+                                    strokeWidth={1.5}
+                                    strokeDasharray="4 3"
+                                    strokeOpacity={0.85}
+                                    label={{
+                                      value: `💊 ${evt.newMedications[0] || 'Lek'}`,
+                                      fill: '#db2777',
+                                      fontSize: 9.5,
+                                      fontWeight: 700,
+                                      position: 'insideTopLeft'
+                                    }}
+                                  />
+                                ))}
+
                                 <Line 
                                   yAxisId="left" 
                                   type="monotone" 
@@ -903,9 +956,15 @@ export default function App() {
                                   name="BMI (kg/m²)" 
                                   stroke="#8b5cf6" 
                                   strokeWidth={3} 
-                                  dot={{ r: 5, fill: '#8b5cf6', stroke: '#ffffff', strokeWidth: 1.5, cursor: 'pointer' }} 
+                                  dot={(dotProps: any) => (
+                                    <CustomBmiChartDot 
+                                      {...dotProps} 
+                                      onSelectVisit={handleNavigateToHistoryVisit} 
+                                      showMedicationBadges={showMedicationBadges} 
+                                    />
+                                  )}
                                   activeDot={{ 
-                                    r: 7, 
+                                    r: 8, 
                                     fill: '#8b5cf6', 
                                     stroke: '#ffffff', 
                                     strokeWidth: 2, 
@@ -945,8 +1004,9 @@ export default function App() {
                               </LineChart>
                             </ResponsiveContainer>
                             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mt-2 px-1 gap-1">
-                              <span className="flex items-center gap-1">
-                                💡 Kliknij dowolny punkt na wykresie lub przycisk w chmurce (tooltip), aby przejść do wybranej wizyty w historii.
+                              <span className="flex items-center gap-1.5 flex-wrap">
+                                <span>💡 Kliknij dowolny punkt lub znacznik 💊, aby przejść do wizyty w historii.</span>
+                                <span className="text-pink-600 dark:text-pink-400 font-medium">Znaczniki 💊 oznaczają start nowych leków.</span>
                               </span>
                               {selectedHistoryId && (
                                 <button

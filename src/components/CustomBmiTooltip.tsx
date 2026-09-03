@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, History as HistoryIcon, Target, Activity, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Calendar, History as HistoryIcon, Target, Activity, ArrowRight, CheckCircle2, Pill, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import { WeightGoal } from '../services/WeightGoalService';
 
 export interface BmiChartPointData {
@@ -15,6 +15,13 @@ export interface BmiChartPointData {
   symptoms?: string;
   medications?: string;
   isSafeMeds?: boolean;
+  hasNewMedication?: boolean;
+  newMedications?: string[];
+  allMedications?: string[];
+  medicationChangeNote?: string;
+  weightDeltaAfterMed?: number;
+  bmiDeltaAfterMed?: number;
+  daysObservedAfterMed?: number;
 }
 
 interface CustomBmiTooltipProps {
@@ -134,6 +141,47 @@ export const CustomBmiTooltip: React.FC<CustomBmiTooltipProps> = ({
               {data.icd10Code}
             </span>
           )}
+        </div>
+      )}
+
+      {/* Znacznik rozpoczęcia nowej farmakoterapii */}
+      {data.hasNewMedication && data.newMedications && data.newMedications.length > 0 && (
+        <div className="p-2.5 rounded-lg bg-gradient-to-br from-pink-950/80 to-purple-950/70 border border-pink-700/70 text-pink-200 text-[11px] space-y-1.5 shadow-md">
+          <div className="flex items-center justify-between font-bold text-pink-300">
+            <span className="flex items-center gap-1.5">
+              <Pill size={14} className="text-pink-400 shrink-0 animate-pulse" />
+              <span>Rozpoczęcie farmakoterapii</span>
+            </span>
+            <span className="text-[9px] bg-pink-900/90 text-pink-100 px-1.5 py-0.5 rounded font-bold border border-pink-600">
+              💊 Nowy lek
+            </span>
+          </div>
+          <div className="font-semibold text-white pl-0.5 leading-snug">
+            {data.newMedications.join(', ')}
+          </div>
+          {data.weightDeltaAfterMed !== undefined && (
+            <div className="pt-1 border-t border-pink-800/60 flex items-center justify-between text-[10px] text-pink-200">
+              <span className="text-slate-400">Dynamika po wdrożeniu:</span>
+              <span className={`font-mono font-bold flex items-center gap-1 ${
+                data.weightDeltaAfterMed < 0 ? 'text-emerald-400' : data.weightDeltaAfterMed > 0 ? 'text-amber-400' : 'text-slate-300'
+              }`}>
+                {data.weightDeltaAfterMed < 0 ? <TrendingDown size={12} /> : data.weightDeltaAfterMed > 0 ? <TrendingUp size={12} /> : <Minus size={12} />}
+                {data.weightDeltaAfterMed > 0 ? `+${data.weightDeltaAfterMed}` : data.weightDeltaAfterMed} kg
+                {data.bmiDeltaAfterMed !== undefined && (
+                  <span className="opacity-80">({data.bmiDeltaAfterMed > 0 ? `+${data.bmiDeltaAfterMed}` : data.bmiDeltaAfterMed} BMI)</span>
+                )}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Leki przyjmowane na tej wizycie (gdy nie ma nowego wdrożenia) */}
+      {!data.hasNewMedication && data.medications && data.medications.trim().length > 0 && !['brak', 'none', '-'].includes(data.medications.toLowerCase().trim()) && (
+        <div className="pt-0.5 text-[10.5px] text-slate-300 leading-snug flex items-baseline gap-1.5">
+          <Pill size={11} className="text-slate-400 shrink-0 mt-0.5" />
+          <span className="text-slate-400 font-medium">Leki:</span>
+          <span className="font-normal text-slate-200">{data.medications}</span>
         </div>
       )}
 
