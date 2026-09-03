@@ -34,12 +34,55 @@ export function CopyButton({ label, text, icon }: { label: string, text: string 
 export default function QuickActions({ 
   gotoweTeksty, 
   onSummarize,
-  hasMessages 
+  hasMessages,
+  lastParsedJson,
+  patientInfo
 }: { 
   gotoweTeksty: any, 
   onSummarize: () => void,
-  hasMessages: boolean
+  hasMessages: boolean,
+  lastParsedJson?: any,
+  patientInfo?: any
 }) {
+  const handleDownloadERecepta = () => {
+    if (!lastParsedJson?.bezpieczenstwo_lekowe?.leki) return;
+    
+    let newName = 'Jan Kowalski';
+    let newPesel = '80010112345';
+    if (patientInfo) {
+      if (patientInfo.imie && patientInfo.nazwisko) {
+        newName = `${patientInfo.imie} ${patientInfo.nazwisko}`;
+      } else if (patientInfo.name) {
+        newName = patientInfo.name;
+      }
+      if (patientInfo.pesel) {
+        newPesel = patientInfo.pesel;
+      }
+    }
+
+    const newMeds = lastParsedJson.bezpieczenstwo_lekowe.leki.map((lek: any) => ({
+      name: lek.nazwa || '',
+      dosage: lek.dawka || '1x1',
+      quantity: lek.ilosc || '1 op.'
+    }));
+
+    const data = {
+      patientName: newName,
+      patientPesel: newPesel,
+      doctorName: 'Lek. Anna Nowak',
+      doctorPzw: '1234567',
+      date: new Date().toISOString().split('T')[0],
+      accessCode: Math.floor(1000 + Math.random() * 9000).toString(),
+      medications: newMeds
+    };
+
+    import('../services/EReceptaService').then(({ EReceptaService }) => {
+      EReceptaService.downloadJSON(data);
+    });
+  };
+
+  const hasLeki = !!lastParsedJson?.bezpieczenstwo_lekowe?.leki;
+
   return (
     <div className="bg-white dark:bg-slate-900 p-4 border-b border-gray-200 dark:border-slate-800 shadow-sm sticky top-0 z-10 flex items-center justify-between transition-colors duration-300">
       <div className="flex flex-col gap-3">
@@ -55,6 +98,15 @@ export default function QuickActions({
       </div>
 
       <div className="flex items-center gap-2">
+        {hasLeki && (
+          <button
+            onClick={handleDownloadERecepta}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-sm border bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800"
+          >
+            <FileText size={18} />
+            Pobierz JSON (P1)
+          </button>
+        )}
         <button
           onClick={onSummarize}
           disabled={!hasMessages}

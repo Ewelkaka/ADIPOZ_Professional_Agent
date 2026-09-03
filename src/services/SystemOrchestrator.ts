@@ -112,7 +112,7 @@ export class SystemOrchestrator {
     };
 
     // 10. LocalPatientDB - Save AFTER integration data is ready
-    await this.patientDB.saveAnalysis(patientId, symptoms, medications, vitals, fullAnalysis);
+    await this.patientDB.saveAnalysis(patientId, symptoms, medications, vitals, fullAnalysis, patientInfo);
 
     NotificationService.addNotification('SUCCESS', 'Analiza Ukończona', `Zapisano analizę dla pacjenta ${patientId}`);
 

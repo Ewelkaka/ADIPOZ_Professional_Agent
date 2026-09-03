@@ -9,6 +9,7 @@ export interface AnalysisRecord {
   medications: string;
   vitals: any;
   analysis: any;
+  patientInfo?: any;
 }
 
 export class LocalPatientDB {
@@ -32,7 +33,7 @@ export class LocalPatientDB {
     localStorage.setItem(this.STORAGE_KEY, JSON.stringify(obj));
   }
 
-  async saveAnalysis(patientId: string, symptoms: string, medications: string, vitals: any, analysis: any) {
+  async saveAnalysis(patientId: string, symptoms: string, medications: string, vitals: any, analysis: any, patientInfo?: any) {
     const history = await this.loadHistory();
     const patientHistory = history.get(patientId) || [];
     
@@ -43,7 +44,8 @@ export class LocalPatientDB {
       symptoms,
       medications,
       vitals,
-      analysis
+      analysis,
+      patientInfo
     };
 
     patientHistory.unshift(record); // Newest first

@@ -10,6 +10,8 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { cn } from "../lib/utils";
 import QuickActions, { CopyButton } from "./QuickActions";
+import EReceptaModal from "./EReceptaModal";
+import { EReceptaService } from "../services/EReceptaService";
 
 const sovereignEngine = new SovereignEngine();
 
@@ -196,11 +198,11 @@ const handlePrintSummaryAndNote = (dataToPrint: any) => {
           <div style="font-size: 12px; color: #334155;">
             <p style="margin: 3px 0;"><strong>ICD-10 (Rozpoznania):</strong></p>
             <div style="margin: 4px 0 8px 0;">
-              ${dataToPrint.kody_rozliczeniowe["ICD-10"]?.map((c: string) => `<span class="badge">${c}</span>`).join('') || '—'}
+              ${Array.isArray(dataToPrint.kody_rozliczeniowe["ICD-10"]) ? dataToPrint.kody_rozliczeniowe["ICD-10"].map((c: string) => `<span class="badge">${c}</span>`).join('') : dataToPrint.kody_rozliczeniowe["ICD-10"] || '—'}
             </div>
             <p style="margin: 3px 0;"><strong>ICD-9 (Procedury):</strong></p>
             <div style="margin: 4px 0 8px 0;">
-              ${dataToPrint.kody_rozliczeniowe["ICD-9"]?.map((c: string) => `<span class="badge">${c}</span>`).join('') || '—'}
+              ${Array.isArray(dataToPrint.kody_rozliczeniowe["ICD-9"]) ? dataToPrint.kody_rozliczeniowe["ICD-9"].map((c: string) => `<span class="badge">${c}</span>`).join('') : dataToPrint.kody_rozliczeniowe["ICD-9"] || '—'}
             </div>
             <p style="margin: 8px 0 0 0; font-size: 11px; color: #64748b; font-style: italic; line-height: 1.3;">
               <strong>Medyczne Uzasadnienie:</strong> ${dataToPrint.kody_rozliczeniowe.Uzasadnienie || '—'}
@@ -248,7 +250,7 @@ const handlePrintSummaryAndNote = (dataToPrint: any) => {
           <p style="margin: 10px 0 5px 0; font-size: 12.5px;"><strong>Pilność wizyt kontrolnych / badań:</strong> <span class="badge" style="background:#ffffff; color:#15803d; border-color:#bbf7d0;">${dataToPrint.podsumowanie_dla_pacjenta.pilnosc_badan || 'Standardowa'}</span></p>
           <p style="margin: 12px 0 4px 0; font-size: 12.5px; font-weight: 700;">Zasady postępowania i przyjmowania leków:</p>
           <ol style="margin-bottom: 0; margin-top: 4px; padding-left: 20px; font-size: 12.5px; line-height: 1.5;">
-            ${dataToPrint.podsumowanie_dla_pacjenta.zalecenia?.map((z: string) => `<li style="margin-bottom: 4px;">${z}</li>`).join('') || '<li>Stosuj się do dotychczasowych wskazówek lekarskich.</li>'}
+            ${Array.isArray(dataToPrint.podsumowanie_dla_pacjenta.zalecenia) ? dataToPrint.podsumowanie_dla_pacjenta.zalecenia.map((z: string) => `<li style="margin-bottom: 4px;">${z}</li>`).join('') : dataToPrint.podsumowanie_dla_pacjenta.zalecenia || '<li>Stosuj się do dotychczasowych wskazówek lekarskich.</li>'}
           </ol>
         </div>
       </div>
@@ -309,6 +311,7 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clinicalAlerts, setClinicalAlerts] = useState<ClinicalAlert[]>([]);
+  const [isEReceptaModalOpen, setIsEReceptaModalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
 
@@ -361,19 +364,29 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
     recognition.interimResults = true;
     recognition.continuous = true;
 
-    const currentInput = input;
-
+    // Zapisz początkowy stan pola tekstowego
+    const initialInput = input;
+    
     recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results)
-        .map((result: any) => result[0].transcript)
-        .join('');
-      
-      setInput((currentInput ? currentInput + ' ' : '') + transcript);
+      let transcript = '';
+
+      for (let i = 0; i < event.results.length; ++i) {
+        transcript += event.results[i][0].transcript;
+      }
+
+      // Połącz początkowy tekst z nowo rozpoznanym
+      const separator = initialInput && !initialInput.endsWith(' ') ? ' ' : '';
+      setInput(initialInput + separator + transcript);
     };
 
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error", event.error);
       setIsRecording(false);
+      if (event.error === 'not-allowed') {
+        setError("Brak dostępu do mikrofonu. Sprawdź uprawnienia przeglądarki.");
+      } else {
+        setError("Wystąpił błąd podczas rozpoznawania mowy.");
+      }
     };
 
     recognition.onend = () => {
@@ -688,7 +701,7 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
         <div className="flex items-center gap-4">
           <div className="flex gap-2">
             <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => alert("Profil użytkownika")}><User size={14} className="mr-1"/>Użytkownik</Button>
-            <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => alert("Otwieram e-receptę")}><Pill size={14} className="mr-1"/>e-Recepta</Button>
+            <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => setIsEReceptaModalOpen(true)}><Pill size={14} className="mr-1"/>e-Recepta</Button>
             <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => alert("Otwieram e-wizytę")}><FileText size={14} className="mr-1"/>e-Wizyta</Button>
             <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => alert("Otwieram e-skierowanie")}><FilePlus size={14} className="mr-1"/>e-Skierowanie</Button>
             <Button variant="outline" size="sm" className="dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" onClick={() => window.print()}><Printer size={14} className="mr-1"/>Drukuj Zalecenia dla Pacjenta</Button>
@@ -807,6 +820,8 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
         gotoweTeksty={lastParsedJson?.gotowe_teksty} 
         onSummarize={handleSummarize}
         hasMessages={messages.length > 0}
+        lastParsedJson={lastParsedJson}
+        patientInfo={patientInfo}
       />
 
       {/* Messages Area */}
@@ -845,7 +860,12 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
           </div>
         ) : (
           messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
+            <MessageBubble 
+              key={msg.id} 
+              message={msg} 
+              onOpenERecepta={() => setIsEReceptaModalOpen(true)} 
+              patientInfo={patientInfo}
+            />
           ))
         )}
         <div ref={messagesEndRef} />
@@ -869,7 +889,8 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
                 }}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  mode === "analysis" ? "Opisz przebieg wizyty lub wklej notatki..." :
+                  isRecording ? "🎤 Nasłuchiwanie (mów teraz)..." :
+                  mode === "analysis" ? "Opisz przebieg wizyty, wklej notatki lub dyktuj głosowo..." :
                   mode === "search" ? "Czego szukasz w wytycznych?" :
                   "Jakiej placówki lub specjalisty szukasz?"
                 }
@@ -918,11 +939,17 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
         </div>
       </div>
 
+      <EReceptaModal
+        isOpen={isEReceptaModalOpen}
+        onClose={() => setIsEReceptaModalOpen(false)}
+        analysisData={lastParsedJson}
+        patientInfo={patientInfo}
+      />
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, onOpenERecepta, patientInfo }: { message: Message, onOpenERecepta?: () => void, patientInfo?: any }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
@@ -951,6 +978,41 @@ function MessageBubble({ message }: { message: Message }) {
     navigator.clipboard.writeText(message.content);
     setCopiedJson(true);
     setTimeout(() => setCopiedJson(false), 2000);
+  };
+
+  const handleDownloadERecepta = () => {
+    if (!parsedJson?.bezpieczenstwo_lekowe?.leki) return;
+    
+    let newName = 'Jan Kowalski';
+    let newPesel = '80010112345';
+    if (patientInfo) {
+      if (patientInfo.imie && patientInfo.nazwisko) {
+        newName = `${patientInfo.imie} ${patientInfo.nazwisko}`;
+      } else if (patientInfo.name) {
+        newName = patientInfo.name;
+      }
+      if (patientInfo.pesel) {
+        newPesel = patientInfo.pesel;
+      }
+    }
+
+    const newMeds = parsedJson.bezpieczenstwo_lekowe.leki.map((lek: any) => ({
+      name: lek.nazwa || '',
+      dosage: lek.dawka || '1x1',
+      quantity: lek.ilosc || '1 op.'
+    }));
+
+    const data = {
+      patientName: newName,
+      patientPesel: newPesel,
+      doctorName: 'Lek. Anna Nowak',
+      doctorPzw: '1234567',
+      date: new Date().toISOString().split('T')[0],
+      accessCode: Math.floor(1000 + Math.random() * 9000).toString(),
+      medications: newMeds
+    };
+
+    EReceptaService.downloadJSON(data);
   };
 
   return (
@@ -1002,7 +1064,7 @@ function MessageBubble({ message }: { message: Message }) {
                       </div>
                     )}
 
-                    {parsedJson.brakujące_dane && parsedJson.brakujące_dane.length > 0 && (
+                    {Array.isArray(parsedJson.brakujące_dane) && parsedJson.brakujące_dane.length > 0 && (
                       <div className="bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400 text-yellow-800 dark:text-yellow-400 p-4 rounded shadow-sm">
                         <h4 className="font-semibold flex items-center gap-2 mb-2 dark:text-yellow-300"><Search size={16}/> Brakujące dane - pytania do lekarza:</h4>
                         <ul className="list-disc pl-5 space-y-1 dark:text-yellow-400/80">
@@ -1015,15 +1077,22 @@ function MessageBubble({ message }: { message: Message }) {
                       <div className="bg-slate-50 dark:bg-slate-800/20 p-4 rounded-xl border border-slate-200/50 dark:border-slate-800/80">
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="font-semibold text-gray-800 dark:text-slate-200 flex items-center gap-2"><FileText size={16}/> Podsumowanie wizyty</h4>
-                          <Button size="sm" variant="outline" className="text-xs h-7 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/20 font-semibold" onClick={() => handlePrintSummaryAndNote(parsedJson)}>
-                            <Printer size={12} className="mr-1" /> Szybki Druk Karty Wizyty (A4)
-                          </Button>
+                          <div className="flex gap-2 flex-wrap justify-end">
+                            {parsedJson.bezpieczenstwo_lekowe?.leki && (
+                              <Button size="sm" variant="outline" className="text-xs h-7 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/20 font-semibold" onClick={handleDownloadERecepta}>
+                                <FileCode size={12} className="mr-1" /> Pobierz e-Receptę JSON
+                              </Button>
+                            )}
+                            <Button size="sm" variant="outline" className="text-xs h-7 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/20 font-semibold" onClick={() => handlePrintSummaryAndNote(parsedJson)}>
+                              <Printer size={12} className="mr-1" /> Szybki Druk (A4)
+                            </Button>
+                          </div>
                         </div>
                         <p className="text-gray-600 dark:text-slate-400 leading-relaxed text-sm">{parsedJson.podsumowanie_wizyty}</p>
                       </div>
                     )}
 
-                    {parsedJson.mapped_symptoms && parsedJson.mapped_symptoms.length > 0 && (
+                    {Array.isArray(parsedJson.mapped_symptoms) && parsedJson.mapped_symptoms.length > 0 && (
                       <div>
                         <h4 className="font-semibold text-gray-800 dark:text-slate-200 flex items-center gap-2 mb-1"><Activity size={16}/> Zmapowane objawy (terminologia medyczna)</h4>
                         <div className="flex flex-wrap gap-2">
@@ -1036,7 +1105,7 @@ function MessageBubble({ message }: { message: Message }) {
                       </div>
                     )}
                     
-                    {parsedJson.care_gaps && parsedJson.care_gaps.length > 0 && (
+                    {Array.isArray(parsedJson.care_gaps) && parsedJson.care_gaps.length > 0 && (
                       <div>
                         <h4 className="font-semibold text-gray-800 dark:text-slate-200 flex items-center gap-2 mb-1"><AlertCircle size={16}/> Care Gaps</h4>
                         <ul className="list-disc pl-5 text-gray-600 dark:text-slate-400 space-y-1">
@@ -1045,7 +1114,7 @@ function MessageBubble({ message }: { message: Message }) {
                       </div>
                     )}
 
-                    {parsedJson.proponowane_kroki && parsedJson.proponowane_kroki.length > 0 && (
+                    {Array.isArray(parsedJson.proponowane_kroki) && parsedJson.proponowane_kroki.length > 0 && (
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <h4 className="font-semibold text-gray-800 dark:text-slate-200 flex items-center gap-2"><Activity size={16}/> Proponowane kroki</h4>
@@ -1081,11 +1150,11 @@ function MessageBubble({ message }: { message: Message }) {
                         <div className="text-sm text-blue-800 dark:text-blue-400 space-y-1">
                           <p className="flex items-center gap-2">
                             <Plus size={14} className="text-blue-600 dark:text-blue-400" />
-                            <strong>ICD-10:</strong> {parsedJson.kody_rozliczeniowe["ICD-10"]?.join(", ")}
+                            <strong>ICD-10:</strong> {Array.isArray(parsedJson.kody_rozliczeniowe["ICD-10"]) ? parsedJson.kody_rozliczeniowe["ICD-10"].join(", ") : parsedJson.kody_rozliczeniowe["ICD-10"]}
                           </p>
                           <p className="flex items-center gap-2">
                             <ListPlus size={14} className="text-blue-600 dark:text-blue-400" />
-                            <strong>ICD-9:</strong> {parsedJson.kody_rozliczeniowe["ICD-9"]?.join(", ")}
+                            <strong>ICD-9:</strong> {Array.isArray(parsedJson.kody_rozliczeniowe["ICD-9"]) ? parsedJson.kody_rozliczeniowe["ICD-9"].join(", ") : parsedJson.kody_rozliczeniowe["ICD-9"]}
                           </p>
                           <p className="mt-2 text-xs italic opacity-80">{parsedJson.kody_rozliczeniowe.Uzasadnienie}</p>
                         </div>
@@ -1093,8 +1162,8 @@ function MessageBubble({ message }: { message: Message }) {
                     )}
 
                     <div className="flex flex-wrap gap-2 mt-3">
-                      <CopyButton label="Kopiuj ICD-10" text={parsedJson.kody_rozliczeniowe?.["ICD-10"]?.join(", ")} icon={<FileCode size={14}/>} />
-                      <CopyButton label="Kopiuj ICD-9" text={parsedJson.kody_rozliczeniowe?.["ICD-9"]?.join(", ")} icon={<FileCode size={14}/>} />
+                      <CopyButton label="Kopiuj ICD-10" text={Array.isArray(parsedJson.kody_rozliczeniowe?.["ICD-10"]) ? parsedJson.kody_rozliczeniowe?.["ICD-10"].join(", ") : parsedJson.kody_rozliczeniowe?.["ICD-10"]} icon={<FileCode size={14}/>} />
+                      <CopyButton label="Kopiuj ICD-9" text={Array.isArray(parsedJson.kody_rozliczeniowe?.["ICD-9"]) ? parsedJson.kody_rozliczeniowe?.["ICD-9"].join(", ") : parsedJson.kody_rozliczeniowe?.["ICD-9"]} icon={<FileCode size={14}/>} />
                       <CopyButton label="Kopiuj Uzasadnienie" text={parsedJson.kody_rozliczeniowe?.Uzasadnienie} icon={<FileText size={14}/>} />
                     </div>
 
@@ -1134,6 +1203,28 @@ function MessageBubble({ message }: { message: Message }) {
                           <p><strong>Interakcje:</strong> {parsedJson.bezpieczenstwo_lekowe.interakcje}</p>
                           <p><strong>Dawkowanie:</strong> {parsedJson.bezpieczenstwo_lekowe.dawkowanie}</p>
                           <p><strong>Ostrzeżenia:</strong> {parsedJson.bezpieczenstwo_lekowe.ostrzezenia}</p>
+                          
+                          {parsedJson.bezpieczenstwo_lekowe.leki && Array.isArray(parsedJson.bezpieczenstwo_lekowe.leki) && parsedJson.bezpieczenstwo_lekowe.leki.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-current/20">
+                              <p className="font-semibold mb-1">Sugerowane leki na receptę:</p>
+                              <ul className="list-disc list-inside space-y-1 ml-1">
+                                {parsedJson.bezpieczenstwo_lekowe.leki.map((lek: any, idx: number) => (
+                                  <li key={idx}><strong>{lek.nazwa}</strong> — {lek.dawka} ({lek.ilosc})</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          
+                          <div className="mt-4 pt-3 border-t border-current/20 flex justify-end">
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              className="text-xs h-7 border-current/30 hover:bg-black/5 dark:hover:bg-white/10" 
+                              onClick={() => onOpenERecepta?.()}
+                            >
+                              <Pill size={12} className="mr-1" /> Wystaw e-Receptę (JSON P1)
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1155,7 +1246,7 @@ function MessageBubble({ message }: { message: Message }) {
                           <p>{parsedJson.podsumowanie_dla_pacjenta.wyjasnienie}</p>
                           <p className="font-medium text-emerald-900 dark:text-emerald-300">Pilność badań: {parsedJson.podsumowanie_dla_pacjenta.pilnosc_badan}</p>
                           <ul className="list-decimal pl-5 space-y-1">
-                            {parsedJson.podsumowanie_dla_pacjenta.zalecenia?.map((krok: string, i: number) => <li key={i}>{krok}</li>)}
+                            {Array.isArray(parsedJson.podsumowanie_dla_pacjenta.zalecenia) && parsedJson.podsumowanie_dla_pacjenta.zalecenia.map((krok: string, i: number) => <li key={i}>{krok}</li>)}
                           </ul>
                         </div>
                       </div>
@@ -1178,7 +1269,7 @@ function MessageBubble({ message }: { message: Message }) {
                           <div>
                             <strong>Badania powierzone:</strong>
                             <ul className="list-disc pl-5">
-                              {parsedJson.opieka_koordynowana.badania_powierzone?.map((badanie: string, i: number) => <li key={i}>{badanie}</li>)}
+                              {Array.isArray(parsedJson.opieka_koordynowana.badania_powierzone) && parsedJson.opieka_koordynowana.badania_powierzone.map((badanie: string, i: number) => <li key={i}>{badanie}</li>)}
                             </ul>
                           </div>
                           <p><strong>IPOM (6 mies.):</strong> {parsedJson.opieka_koordynowana.ipom}</p>
@@ -1205,7 +1296,7 @@ function MessageBubble({ message }: { message: Message }) {
                           <div>
                             <strong>Czerwone Flagi:</strong>
                             <ul className="list-disc pl-5">
-                              {parsedJson.legal_compliance.czerwone_flagi?.map((flaga: string, i: number) => <li key={i}>{flaga}</li>)}
+                              {Array.isArray(parsedJson.legal_compliance.czerwone_flagi) && parsedJson.legal_compliance.czerwone_flagi.map((flaga: string, i: number) => <li key={i}>{flaga}</li>)}
                             </ul>
                           </div>
                           <p><strong>Zgoda i Pouczenie:</strong> {parsedJson.legal_compliance.zgoda_i_pouczenie}</p>

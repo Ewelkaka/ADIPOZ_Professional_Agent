@@ -20,6 +20,10 @@ export interface SovereignAnalysis {
   chronicDiseaseManagement?: string;
   differential_diagnoses?: { diagnosis: string; explanation: string; probability: number }[];
   podsumowanie_leczenia: string;
+  bezpieczenstwo_lekowe?: {
+    ostrzezenia?: string;
+    leki?: any[];
+  };
   gotowe_teksty: {
     do_eWUS: string;
     do_e_recepty: string;
@@ -125,6 +129,19 @@ export class SovereignEngine {
     }
     if (gender === 'M' && age && age >= 50) {
       analysis.proponowane_kroki.push("Badanie PSA (profilaktyka raka prostaty u mężczyzn 50+).");
+    }
+
+    // Rule: Allergies
+    if (patientInfo.allergies && patientInfo.allergies.trim() !== '') {
+      const allergiesLower = patientInfo.allergies.toLowerCase();
+      // Basic rule check for demo purposes
+      if ((lowerMeds.includes("penicylina") || lowerMeds.includes("amoksycylina") || lowerMeds.includes("augmentin")) && allergiesLower.includes("penicylina")) {
+        analysis.alerts.push("KRYTYCZNE RYZYKO: Pacjent podaje alergię na penicylinę (zapis w profilu), a zalecono lek z tej grupy.");
+        analysis.bezpieczenstwo_lekowe = {
+          ...analysis.bezpieczenstwo_lekowe,
+          ostrzezenia: "KRYTYCZNE RYZYKO ALERGICZNE: Pacjent ma udokumentowaną alergię na leki zalecone lub przyjmowane. Bezwzględnie zmień terapię!"
+        };
+      }
     }
 
     // Rule: Hypertension

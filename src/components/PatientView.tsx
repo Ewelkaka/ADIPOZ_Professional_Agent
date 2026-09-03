@@ -18,7 +18,7 @@ const generateMockEkgData = (period: '24h' | '7d') => {
 };
 
 interface PatientViewProps {
-  patientInfo: { age: number; weight: number; height: number; gender: string; bmi: number };
+  patientInfo: { age: number; weight: number; height: number; gender: string; bmi: number; allergies?: string };
   analysis: any;
   patientHistory: AnalysisRecord[];
   vitals?: { temp: number; bp: string; pulse?: number; allergies: any[] };
@@ -29,6 +29,27 @@ export const PatientView: React.FC<PatientViewProps> = ({ patientInfo, analysis,
   const lastVisit = patientHistory.length > 0 ? patientHistory[0] : null;
   const [ekgPeriod, setEkgPeriod] = useState<'24h' | '7d'>('24h');
   const ekgData = useMemo(() => generateMockEkgData(ekgPeriod), [ekgPeriod]);
+
+  const weightBmiChartData = useMemo(() => {
+    const data = patientHistory
+      .filter(record => record.patientInfo && record.patientInfo.weight)
+      .map(record => ({
+        date: new Date(record.timestamp).toLocaleDateString(),
+        weight: record.patientInfo.weight,
+        bmi: record.patientInfo.bmi
+      }))
+      .reverse();
+
+    if (data.length === 0 && patientInfo) {
+      data.push({
+        date: new Date().toLocaleDateString(),
+        weight: patientInfo.weight,
+        bmi: patientInfo.bmi
+      });
+    }
+
+    return data;
+  }, [patientHistory, patientInfo]);
 
   // PPG states & ref objects for camera pulse detection
   const [isScanning, setIsScanning] = useState(false);
@@ -294,6 +315,12 @@ export const PatientView: React.FC<PatientViewProps> = ({ patientInfo, analysis,
               <p className="text-lg font-semibold dark:text-slate-100">{bmiInfo.category}</p>
               <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">{bmiInfo.risk}</p>
             </div>
+            {patientInfo.allergies && patientInfo.allergies.trim() !== '' && (
+              <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-xl col-span-2 border border-red-100 dark:border-red-800">
+                <p className="text-xs font-bold text-red-500 dark:text-red-400 uppercase">Zgłoszone Alergie</p>
+                <p className="text-lg font-semibold text-red-700 dark:text-red-300">{patientInfo.allergies}</p>
+              </div>
+            )}
           </div>
         </section>
 
@@ -323,6 +350,32 @@ export const PatientView: React.FC<PatientViewProps> = ({ patientInfo, analysis,
           )}
         </section>
       </div>
+
+      {/* Historia Wagi i BMI */}
+      <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <Activity className="text-blue-600" size={24} />
+            <h2 className="text-xl font-bold dark:text-slate-100">Historia Wagi i BMI</h2>
+          </div>
+        </div>
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={weightBmiChartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
+              <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickMargin={10} />
+              <YAxis yAxisId="left" stroke="#3b82f6" fontSize={12} label={{ value: 'Waga (kg)', angle: -90, position: 'insideLeft', style: { fill: '#3b82f6' } }} />
+              <YAxis yAxisId="right" orientation="right" stroke="#10b981" fontSize={12} label={{ value: 'BMI', angle: 90, position: 'insideRight', style: { fill: '#10b981' } }} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc' }}
+                itemStyle={{ color: '#e2e8f0' }}
+              />
+              <Line yAxisId="left" type="monotone" dataKey="weight" name="Waga (kg)" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2 }} activeDot={{ r: 6 }} />
+              <Line yAxisId="right" type="monotone" dataKey="bmi" name="BMI" stroke="#10b981" strokeWidth={3} dot={{ r: 4, fill: '#10b981', strokeWidth: 2 }} activeDot={{ r: 6 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
 
       {/* Wizualizacja EKG */}
       <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">

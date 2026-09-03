@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { SystemOrchestrator } from './services/SystemOrchestrator';
-import { AlertCircle, FileText, History as HistoryIcon, Shield, User, Activity, Pill, CheckCircle2, XCircle, Settings as SettingsIcon, Database, AlertTriangle, Share2, Code, Terminal, ChevronLeft, UserCircle } from 'lucide-react';
+import { AlertCircle, FileText, History as HistoryIcon, Shield, User, Activity, Pill, CheckCircle2, XCircle, Settings as SettingsIcon, Database, AlertTriangle, Share2, Code, Terminal, ChevronLeft, UserCircle, FileCode } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { SettingsService, UserSettings } from './services/SettingsService';
 import { NotificationCenter } from './components/NotificationCenter';
@@ -10,13 +10,14 @@ import { History } from './components/History';
 import Chat from './components/Chat';
 import { PatientView } from './components/PatientView';
 import { generatePatientReportPDF } from './lib/pdfGenerator';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 const orchestrator = new SystemOrchestrator();
 const patientDB = new LocalPatientDB();
 
 export default function App() {
   const [patientId, setPatientId] = useState('PAC-12345');
-  const [patientInfo, setPatientInfo] = useState({ age: 45, weight: 75, height: 175, gender: 'M', bmi: 24.5 });
+  const [patientInfo, setPatientInfo] = useState<{ age: number; weight: number; height: number; gender: string; bmi: number; allergies: string; imie?: string; nazwisko?: string; name?: string; pesel?: string }>({ age: 45, weight: 75, height: 175, gender: 'M', bmi: 24.5, allergies: '' });
 
   useEffect(() => {
     const heightInMeters = patientInfo.height / 100;
@@ -94,6 +95,20 @@ export default function App() {
     setVitals(record.vitals);
     setView('analysis');
   };
+
+  const bpChartData = useMemo(() => {
+    return patientHistory
+      .filter(record => record.vitals && typeof record.vitals.bp === 'string' && record.vitals.bp.includes('/'))
+      .map(record => {
+        const [sys, dia] = record.vitals.bp.split('/').map(Number);
+        return {
+          date: new Date(record.timestamp).toLocaleDateString(),
+          systolic: sys,
+          diastolic: dia
+        };
+      })
+      .reverse();
+  }, [patientHistory]);
 
   const handleDeleteHistory = async (id: string) => {
     await patientDB.deleteAnalysis(patientId, id);
@@ -223,6 +238,17 @@ export default function App() {
                           ))}
                         </div>
                       </div>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Alergie</label>
+                      <input 
+                        type="text" 
+                        placeholder="Wpisz znane alergie (np. Penicylina, orzeszki) lub pozostaw puste"
+                        value={patientInfo.allergies || ''}
+                        onChange={(e) => setPatientInfo({...patientInfo, allergies: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all dark:text-slate-100"
+                      />
                     </div>
                   </div>
                   
@@ -399,6 +425,32 @@ export default function App() {
                       </div>
                     )}
                   </section>
+
+                  {/* BP History Chart */}
+                  {bpChartData.length > 0 && (
+                    <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
+                      <div className="flex items-center gap-2 mb-6">
+                        <Activity className="text-blue-600" size={20} />
+                        <h2 className="text-lg font-bold dark:text-slate-100">Historia Ciśnienia Tętniczego</h2>
+                      </div>
+                      <div className="h-64 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={bpChartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
+                            <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickMargin={10} />
+                            <YAxis stroke="#64748b" fontSize={12} domain={['auto', 'auto']} />
+                            <Tooltip
+                              contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc' }}
+                              itemStyle={{ color: '#e2e8f0' }}
+                            />
+                            <Legend wrapperStyle={{ fontSize: '12px' }} />
+                            <Line type="monotone" dataKey="systolic" name="Skurczowe (mmHg)" stroke="#ef4444" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                            <Line type="monotone" dataKey="diastolic" name="Rozkurczowe (mmHg)" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </section>
+                  )}
 
                   {/* Decision & Alerts */}
                   <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
@@ -589,9 +641,37 @@ export default function App() {
 
                   {/* Medical Note */}
                   <section className="bg-slate-900 rounded-2xl p-6 shadow-xl text-slate-300 font-mono text-sm overflow-hidden relative">
-                    <div className="flex items-center gap-2 mb-4 text-slate-100">
-                      <FileText size={20} />
-                      <h2 className="text-lg font-bold font-sans">Wygenerowana Notatka Medyczna</h2>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 text-slate-100 z-20 relative">
+                      <div className="flex items-center gap-2">
+                        <FileText size={20} />
+                        <h2 className="text-lg font-bold font-sans">Wygenerowana Notatka Medyczna</h2>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          const medsList = medications.split(',').filter(m => m.trim().length > 0).map(m => ({
+                            name: m.trim(),
+                            dosage: '1x1',
+                            quantity: '1 op.'
+                          }));
+                          const data = {
+                            patientName: patientInfo.imie && patientInfo.nazwisko ? `${patientInfo.imie} ${patientInfo.nazwisko}` : 'Jan Kowalski',
+                            patientPesel: patientInfo.pesel || '80010112345',
+                            doctorName: 'Lek. Anna Nowak',
+                            doctorPzw: '1234567',
+                            date: new Date().toISOString().split('T')[0],
+                            accessCode: Math.floor(1000 + Math.random() * 9000).toString(),
+                            medications: medsList.length > 0 ? medsList : [{ name: 'Zalecane leki z notatki', dosage: 'Według zaleceń', quantity: '1 op.' }]
+                          };
+                          import('./services/EReceptaService').then(({ EReceptaService }) => {
+                            EReceptaService.downloadJSON(data);
+                          });
+                        }}
+                        className="flex items-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 font-sans font-bold py-1.5 px-3 rounded-lg border border-emerald-500/30 transition-colors"
+                        title="Pobierz plik e-Recepty w formacie JSON P1"
+                      >
+                        <FileCode size={16} />
+                        Pobierz e-Receptę (JSON P1)
+                      </button>
                     </div>
                     <div className="absolute top-6 right-6 opacity-10">
                       <Shield size={120} />

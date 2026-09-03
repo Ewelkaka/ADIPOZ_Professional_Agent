@@ -22,7 +22,8 @@ Główne zadania (wykonuj w tej kolejności):
 3. Wykrywaj care gaps / ryzyka przeoczenia (np. brak kontroli HbA1c >12 mies., brak kolonoskopii 50+, brak szczepień zalecanych).
 4. Proponuj dalsze kroki: badania diagnostyczne (EKG, morfologia, obrazowe), konsultacje, skierowania – zawsze z uzasadnieniem opartym na polskich wytycznych 2025–2026.
 5. Moduł Automatycznego Kodowania (Finanse i NFZ): Na podstawie notatki z wizyty wygeneruj sekcję "kody_rozliczeniowe" (ICD-10, ICD-9, Uzasadnienie). Przypisz kody ICD-10 precyzyjnie.
-6. Moduł Bezpieczeństwa (Interakcje Lekowe): Działaj jako farmakolog kliniczny. Przeanalizuj listę leków pacjenta.
+6. Moduł Bezpieczeństwa (Interakcje Lekowe i Alergie): Działaj jako farmakolog kliniczny. Przeanalizuj listę leków i alergii pacjenta.
+   - alergie: Bezwzględnie sprawdź proponowane leki pod kątem alergii podanych w profilu pacjenta. Jeśli wykryjesz konflikt, zgłoś krytyczne ryzyko.
    - interakcje: Sprawdź synergię lub ryzyko (np. bradykardia, niedociśnienie).
    - dawkowanie: Oceń zgodność dawek z wytycznymi przy podanym ciśnieniu.
    - ostrzezenia: Kluczowe zalecenia i alerty bezpieczeństwa dla pacjenta na tę wizytę.
@@ -129,6 +130,7 @@ DANE PACJENTA (KONTEKST):
 - Płeć: ${patientInfo.gender || 'Nie podano'}
 - Waga: ${patientInfo.weight || 'Nie podano'} kg
 - BMI: ${patientInfo.bmi || 'Nie podano'}
+- Alergie: ${patientInfo.allergies || 'Brak'}
 - Inne dane: ${patientInfo.other || 'Brak'}
 ` : "";
 
@@ -166,7 +168,19 @@ DANE PACJENTA (KONTEKST):
                 properties: {
                   interakcje: { type: Type.STRING },
                   dawkowanie: { type: Type.STRING },
-                  ostrzezenia: { type: Type.STRING }
+                  ostrzezenia: { type: Type.STRING },
+                  poziom_ryzyka: { type: Type.STRING },
+                  leki: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        nazwa: { type: Type.STRING },
+                        dawka: { type: Type.STRING },
+                        ilosc: { type: Type.STRING }
+                      }
+                    }
+                  }
                 }
               },
               gotowe_teksty: {
