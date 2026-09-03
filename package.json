@@ -1,7 +1,9 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "author": "Ewelina Lesiak <ewelinalesiak7@gmail.com>",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",

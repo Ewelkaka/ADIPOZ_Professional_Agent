@@ -43,6 +43,8 @@ export const CustomBmiTooltip: React.FC<CustomBmiTooltipProps> = ({
   if (!data) return null;
 
   const numBmi = Number(data.bmi);
+  if (isNaN(numBmi)) return null;
+
   let category = 'Norma';
   let categoryBadgeClass = 'text-emerald-400 bg-emerald-950/70 border-emerald-700/60';
   let categoryBg = 'bg-emerald-500';
@@ -111,20 +113,20 @@ export const CustomBmiTooltip: React.FC<CustomBmiTooltipProps> = ({
       </div>
 
       {/* Relacja z celem wagi pacjenta */}
-      {weightGoal && data.weight !== undefined && (
+      {weightGoal && data.weight !== undefined && !isNaN(Number(data.weight)) && !isNaN(Number(weightGoal.targetWeight)) && (
         <div className="p-2 rounded-lg bg-purple-950/50 border border-purple-800/60 flex items-center justify-between text-[11px]">
           <div className="flex items-center gap-1.5 text-purple-300">
             <Target size={13} className="text-purple-400 shrink-0" />
             <span>Cel: <strong>{weightGoal.targetWeight} kg</strong></span>
           </div>
           <div className="font-mono font-bold">
-            {data.weight <= weightGoal.targetWeight ? (
+            {Number(data.weight) <= Number(weightGoal.targetWeight) ? (
               <span className="text-emerald-400 flex items-center gap-1">
                 <CheckCircle2 size={12} /> Cel osiągnięty
               </span>
             ) : (
               <span className="text-amber-300">
-                +{(data.weight - weightGoal.targetWeight).toFixed(1)} kg do celu
+                +{(Number(data.weight) - Number(weightGoal.targetWeight)).toFixed(1)} kg do celu
               </span>
             )}
           </div>

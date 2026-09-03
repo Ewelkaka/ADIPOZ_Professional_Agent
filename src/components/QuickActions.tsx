@@ -1,5 +1,5 @@
 import React from 'react';
-import { Copy, Search, Pill, FilePlus, User, Check, FileText } from "lucide-react";
+import { Copy, Search, Pill, FilePlus, User, Check, FileText, Share2 } from "lucide-react";
 import { cn } from "../lib/utils";
 
 export function CopyButton({ label, text, icon }: { label: string, text: string | null | undefined, icon: React.ReactNode }) {
@@ -81,6 +81,42 @@ export default function QuickActions({
     });
   };
 
+  const handleDownloadFhirBundle = () => {
+    if (!lastParsedJson) return;
+
+    import('../services/FhirExportService').then(({ FhirExportService }) => {
+      const patientId = patientInfo?.pesel ? `PAC-${patientInfo.pesel.slice(0, 6)}` : 'PAC-12345';
+      const meds = lastParsedJson.bezpieczenstwo_lekowe?.leki?.map((l: any) => `${l.nazwa} ${l.dawka}`).join(', ') || '';
+      const symptoms = lastParsedJson.dolegliwosci || lastParsedJson.wywiad || lastParsedJson.gotowe_teksty?.dla_pacjenta || 'Konsultacja lekarska';
+      
+      FhirExportService.downloadBundleJson({
+        patientId,
+        patientInfo,
+        doctorInfo: {
+          name: 'Lek. Anna Nowak',
+          pwz: '1234567',
+          specialization: 'Specjalista Medycyny Rodzinnej (POZ)',
+          facility: 'NZOZ Przychodnia Lekarza Rodzinnego POZ'
+        },
+        symptoms,
+        medications: meds,
+        analysis: {
+          data: {
+            decision: {
+              diagnosis: lastParsedJson.diagnoza || lastParsedJson.rozpoznanie || (Array.isArray(lastParsedJson.kody_rozliczeniowe?.["ICD-10"]) ? lastParsedJson.kody_rozliczeniowe?.["ICD-10"][0] : lastParsedJson.kody_rozliczeniowe?.["ICD-10"]),
+              icd10Code: Array.isArray(lastParsedJson.kody_rozliczeniowe?.["ICD-10"]) ? lastParsedJson.kody_rozliczeniowe?.["ICD-10"][0] : lastParsedJson.kody_rozliczeniowe?.["ICD-10"] || 'Z00.0',
+              explanation: lastParsedJson.kody_rozliczeniowe?.Uzasadnienie,
+              action: lastParsedJson.zalecenia || lastParsedJson.gotowe_teksty?.dla_pacjenta
+            },
+            note: {
+              content: typeof lastParsedJson === 'string' ? lastParsedJson : JSON.stringify(lastParsedJson, null, 2)
+            }
+          }
+        }
+      });
+    });
+  };
+
   const hasLeki = !!lastParsedJson?.bezpieczenstwo_lekowe?.leki;
 
   return (
@@ -97,7 +133,7 @@ export default function QuickActions({
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         {hasLeki && (
           <button
             onClick={handleDownloadERecepta}
@@ -105,6 +141,16 @@ export default function QuickActions({
           >
             <FileText size={18} />
             Pobierz JSON (P1)
+          </button>
+        )}
+        {lastParsedJson && (
+          <button
+            onClick={handleDownloadFhirBundle}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-bold transition-all shadow-sm border bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800"
+            title="Eksportuj wygenerowaną notatkę i dane do formatu HL7 FHIR Release 4 Bundle dla systemów HIS/EHR"
+          >
+            <Share2 size={16} />
+            Eksport FHIR (HIS/EHR)
           </button>
         )}
         <button

@@ -1,47 +1,92 @@
-# Dokumentacja Techniczna: AdiPOZ (Sovereign AI Medical)
+# Dokumentacja Techniczna: 🩺 ADIPOZ → Professional Agent
 
-## 1. Przegląd Projektu
-AdiPOZ to zaawansowany asystent medyczny AI, zaprojektowany do wspomagania lekarzy w analizie przypadków pacjentów, przeszukiwaniu wytycznych medycznych oraz zarządzaniu dokumentacją. Aplikacja stawia na bezpieczeństwo danych, oferując zarówno tryb chmurowy (Gemini/OpenAI), jak i tryb suwerenny (lokalne przetwarzanie).
+## 📌 Metadane Projektu i Prawa Własności
+* **Nazwa Systemu:** 🩺 ADIPOZ → Professional Agent (Autonomiczny Asystent Medyczny POZ / CDSS)
+* **Twórca i Wyłączny Właściciel:** Ewelina Lesiak (`ewelinalesiak7@gmail.com`)
+* **Status Prawny:** Wszelkie Prawa Zastrzeżone (All Rights Reserved) © 2026 Ewelina Lesiak
+* **Licencja:** Oprogramowanie Własnościowe / Zastrzeżone (Proprietary Commercial License - zob. plik `LICENSE`)
+* **Wersja Systemu:** 1.0.0-PROD
+* **Środowisko:** Cloud Run / Node.js + Express + React 19 + TypeScript
 
-## 2. Stos Technologiczny
-*   **Frontend:** React 18+
-*   **Język:** TypeScript
-*   **Stylizacja:** Tailwind CSS (z pełnym wsparciem dla Dark Mode)
-*   **Budowanie:** Vite
-*   **Wykresy:** Recharts
-*   **Ikony:** Lucide React
-*   **AI SDK:** `@google/genai` (Gemini), OpenAI SDK
+---
 
-## 3. Struktura Projektu
-*   `/src/components/`: Komponenty UI (Chat, History, PatientView, NotificationCenter, itp.)
-*   `/src/services/`: Logika biznesowa i integracje (Orchestrator, DB, AI Engines)
-*   `/src/lib/`: Narzędzia pomocnicze (np. `cn()` dla Tailwind)
-*   `/src/types.ts`: Definicje typów TypeScript
+## 🎯 1. Filozofia Agentyczna i Główny Przepływ Pracy (Workflow)
+Fundamentem działania systemu **🩺 ADIPOZ → Professional Agent** jest precyzyjnie zdefiniowany, 5-etapowy proces asysty klinicznej o wysokim stopniu autonomii, z zachowaniem nadrzędnej roli lekarza (paradygmat *Human-in-the-Loop*):
 
-## 4. Kluczowe Serwisy
-*   **`SystemOrchestrator`**: Główny koordynator analizy danych pacjenta.
-*   **`SovereignEngine`**: Silnik analizy lokalnej (tryb offline).
-*   **`LocalPatientDB`**: Zarządzanie lokalną bazą historii wizyt (localStorage).
-*   **`gemini.ts` / `openai.ts`**: Integracje z zewnętrznymi modelami AI.
-*   **`NotificationService`**: Obsługa powiadomień systemowych.
-*   **`SettingsService`**: Zarządzanie ustawieniami użytkownika (motyw, jednostki).
+> **„Lekarz kończy wizytę → AdiPOZ autonomicznie analizuje przypadek → znajduje rzeczy, które mogą wymagać uwagi → proponuje działania → lekarz zatwierdza.”**
 
-## 5. Przepływ Danych i Analiza
-1.  **Wejście**: Dane pacjenta (wiek, waga, wzrost, objawy, leki) są wprowadzane w panelu lekarza lub przez czat.
-2.  **Orkiestracja**: `SystemOrchestrator` decyduje o sposobie analizy (tryb suwerenny vs. chmura).
-3.  **Analiza AI**: Modele generują odpowiedź w formacie JSON, zawierającą:
-    *   `podsumowanie_wizyty`
-    *   `decision` (diagnoza, kody ICD-10)
-    *   `dane_do_wizualizacji` (dla wykresów Recharts)
-    *   `podsumowanie_dla_pacjenta` (zalecenia)
-4.  **Wizualizacja**: Jeśli odpowiedź zawiera `dane_do_wizualizacji`, komponent `Chat` automatycznie renderuje wykres słupkowy.
+### Etapy Przepływu:
+1. **Lekarz kończy wizytę:**
+   * Lekarz POZ wprowadza w interfejsie wywiad, objawy pacjenta, zaktualizowaną listę leków, parametry życiowe (ciśnienie, tętno, temperatura) oraz pomiary antropometryczne (waga, wzrost, BMI).
+   * Kliknięcie przycisku zakończenia wizyty („Zakończ wizytę i przekaż do AdiPOZ”) inicjuje autonomiczny proces analizy w tle.
 
-## 6. Dark Mode
-Aplikacja wspiera tryb ciemny poprzez klasy Tailwind CSS (`dark:`).
-*   Stan motywu jest zarządzany w `SettingsService` i stosowany poprzez dodanie klasy `dark` do elementu `document.documentElement`.
-*   Wszystkie komponenty zostały dostosowane do obsługi obu motywów.
+2. **AdiPOZ autonomicznie analizuje przypadek:**
+   * System wieloagentyczny (`SystemOrchestrator`) uruchamia kaskadę wyspecjalizowanych podsystemów analitycznych.
+   * Porównuje bieżący stan z całą zarejestrowaną historią pacjenta w bazie `LocalPatientDB`.
+   * Przetwarza dane w oparciu o wytyczne medyczne (EBM), algorytmy ICD-10 oraz modele LLM (Gemini / OpenAI) lub lokalny silnik suwerenny (`SovereignEngine`).
 
-## 7. Utrzymanie i Rozwój
-*   **Dodawanie nowych funkcji**: Nowe komponenty UI powinny być tworzone w `/src/components/` i wykorzystywać Tailwind CSS.
-*   **Integracja AI**: Zmiany w promptach systemowych należy wprowadzać w `/src/services/gemini.ts` lub `/src/services/openai.ts`.
-*   **Walidacja**: Każda zmiana powinna być weryfikowana za pomocą `lint_applet` oraz `compile_applet`.
+3. **Znajduje rzeczy, które mogą wymagać uwagi:**
+   * **Bezpieczeństwo lekowe i polipragmazja:** Wykrywanie niebezpiecznych interakcji międzylekowych, powielania substancji czynnych oraz przeciwwskazań narządowych (np. niewydolność nerek przy ACEI/metforminie).
+   * **Wahania wagi i BMI:** Moduł `BmiVarianceService` identyfikuje nagłe anomalie (np. niezamierzony spadek wagi >2 pkt BMI mogący wskazywać na chorobę nowotworową, lub gwałtowny skok wagi w dekompensacji krążenia).
+   * **Korelacja farmakoterapii z metabolizmem:** Moduł `MedicationCorrelationService` wskazuje, które leki mogły wywołać zmiany masy ciała.
+   * **Luki diagnostyczne NFZ:** Identyfikacja brakujących badań profilaktycznych lub laboratoryjnych wymaganych dla pacjenta z daną chorobą przewlekłą (np. brak lipidogramu i HbA1c w cukrzycy t. 2).
+   * **Czerwone Flagi (Red Flags):** Natychmiastowa eskalacja objawów sugerujących stany zagrożenia życia.
+
+4. **Proponuje działania:**
+   * Agent formułuje konkretne, gotowe do podjęcia decyzje kliniczne:
+     * Sugestie modyfikacji dawek lub odstawienia leków wchodzących w interakcje.
+     * Pakiety badań laboratoryjnych do zlecenia w ramach budżetu powierzonego POZ.
+     * Wyznaczenie terminu wizyty kontrolnej wraz z celem terapeutycznym.
+     * Propozycje wpisu do e-Recepty (format P1 JSON).
+     * Szkic ustrukturyzowanej notatki lekarskiej SOAP.
+
+5. **Lekarz zatwierdza (Human-in-the-Loop):**
+   * Lekarz przegląda przygotowane propozycje w dedykowanym panelu agenta.
+   * Ma możliwość zatwierdzenia poszczególnych rekomendacji, ich edycji lub odrzucenia, albo skorzystania z opcji „Zatwierdź wszystkie działania jednym kliknięciem”.
+   * Każde zatwierdzenie jest nieodwracalnie rejestrowane w dzienniku audytowym `MedicalAuditLog` wraz ze znacznikiem czasu i identyfikatorem lekarza.
+
+---
+
+## 2. Przegląd i Architektura Projektu
+**🩺 ADIPOZ → Professional Agent** to specjalistyczny system wspomagania decyzji klinicznych (CDSS) zaprojektowany od podstaw dla specyfiki polskiej Podstawowej Opieki Zdrowotnej. Architektura łączy suwerenność danych (Privacy-First) z zaawansowaną inteligencją kognitywną:
+* **Warstwa Klienta (SPA):** Reaktywny interfejs w React 19 z natychmiastowym czasem reakcji, interaktywnymi wykresami Recharts i animacjami Motion.
+* **Warstwa Backendowa (Proxy):** Dedykowany serwer Node.js/Express, który chroni klucze API, zapewnia szyfrowanie transmisji i obsługuje strumieniowanie odpowiedzi AI (SSE).
+* **Warstwa Odporności Danych:** Zabezpieczona obsługa pamięci lokalnej (LocalPatientDB) z defensywnym `try/catch` i mechanizmami automatycznego odzyskiwania po błędach.
+
+---
+
+## 3. Stos Technologiczny
+* **Frontend:** React 19 + TypeScript 5.8
+* **Stylizacja:** Tailwind CSS v4 (wsparcie trybu jasnego i ciemnego)
+* **Wizualizacja:** Recharts 3.8 (krzywe BMI, poziomy ciśnienia tętniczego, punkty zdarzeń lekowych, strefy referencyjne)
+* **Animacje:** Motion (`motion/react`)
+* **Ikony:** Lucide React
+* **AI & Modele:** `@google/genai` (Google Gemini), OpenAI SDK
+* **Generowanie Dokumentacji & Raportów:** jsPDF + AutoTable
+* **Środowisko Uruchomieniowe:** Node.js v20+ / Docker Cloud Run
+
+---
+
+## 4. Kluczowe Moduły i Serwisy Systemowe
+* **`SystemOrchestrator`**: Centralny dyrygent orkiestrujący cykl analizy pacjenta, przełączanie między trybami i integrację podsystemów.
+* **`DecisionEngine`**: Silnik wnioskowania diagnostycznego (kody ICD-10, diagnozy różnicowe, plany leczenia).
+* **`MedicationAnalysisEngine`**: Weryfikacja bezpieczeństwa farmakoterapii, interakcji lekowych i polipragmazji.
+* **`BmiVarianceService`**: Algorytm wyliczający wariancję BMI (delta BMI) oraz generujący alerty o gwałtownych skokach masy ciała.
+* **`MedicationCorrelationService`**: Mapowanie i korelacja wdrożeń leków (np. Ozempic, Forxiga, Ramipril) z osią czasu wykresu BMI.
+* **`WeightGoalService`**: Zarządzanie celami wagowymi pacjenta i obliczanie dynamicznych linii referencyjnych na wykresie.
+* **`MedicalAuditLog`**: Niezmienny rejestr audytu zdarzeń medycznych i decyzji podejmowanych przez lekarza.
+* **`SovereignEngine`**: W 100% lokalny silnik analizy regułowej EBM, funkcjonujący bez połączenia z zewnętrznymi API.
+* **`EReceptaService`**: Generowanie i walidacja pakietów e-recepty w standardzie P1 JSON.
+* **`LocalPatientDB`**: Bezpieczna lokalna baza historii wizyt z weryfikacją spójności danych.
+* **`NotificationService`**: Dźwiękowe i wizualne centrum powiadomień klinicznych.
+
+---
+
+## 5. Prawa Autorskie, Własność Intelektualna i Klauzula Prawna
+System **🩺 ADIPOZ → Professional Agent**, wszystkie jego komponenty programistyczne, algorytmy analizy korelacyjnej, struktury danych, szablony raportów oraz interfejs graficzny stanowią wyłączną własność intelektualną i majątkową:
+
+**Ewelina Lesiak**  
+Adres e-mail do kontaktu: `ewelinalesiak7@gmail.com`  
+© 2026 Ewelina Lesiak. Wszelkie Prawa Zastrzeżone (All Rights Reserved).
+
+Kopiowanie, powielanie, dekompilacja, dystrybucja, oferowanie w modelu SaaS lub komercyjne wdrażanie kodu źródłowego bez uprzedniej pisemnej umowy licencyjnej zawartej z Właścicielką jest surowo zabronione i podlega sankcjom prawnym.

@@ -1,6 +1,6 @@
 {
   "name": "AdiPOZ",
-  "description": "Agentyczny asystent AI dla lekarzy rodzinnych (POZ) w polskim systemie ochrony zdrowia.",
+  "description": "🩺 ADIPOZ → Professional Agent: Agentyczny asystent medyczny POZ. Workflow: Lekarz kończy wizytę → AdiPOZ autonomicznie analizuje przypadek → znajduje rzeczy, które mogą wymagać uwagi → proponuje działania → lekarz zatwierdza.",
   "requestFramePermissions": ["geolocation", "microphone", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

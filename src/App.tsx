@@ -21,6 +21,9 @@ import { BmiVarianceCard } from './components/BmiVarianceCard';
 import { MedicationCorrelationService, MedicationEvent } from './services/MedicationCorrelationService';
 import { CustomBmiChartDot, CustomBmiXAxisTick } from './components/CustomBmiChartDot';
 import { MedicationCorrelationCard } from './components/MedicationCorrelationCard';
+import { AutonomousAgentWorkflowCard } from './components/AutonomousAgentWorkflowCard';
+import { FhirExportModal } from './components/FhirExportModal';
+import { FhirExportParams } from './services/FhirExportService';
 
 const orchestrator = new SystemOrchestrator();
 const patientDB = new LocalPatientDB();
@@ -60,6 +63,9 @@ export default function App() {
   // Stan Wariancji i Dynamiki BMI między ostatnimi wizytami
   const [bmiVarianceThreshold, setBmiVarianceThreshold] = useState<number>(2.0);
 
+  // Stan Modala Eksportu HL7 FHIR Bundle
+  const [isFhirModalOpen, setIsFhirModalOpen] = useState<boolean>(false);
+
   // Stan Znaczników i Korelacji Farmakoterapii na Wykresie BMI
   const [showMedicationLines, setShowMedicationLines] = useState<boolean>(true);
   const [showMedicationBadges, setShowMedicationBadges] = useState<boolean>(true);
@@ -67,6 +73,34 @@ export default function App() {
   const bmiVarianceAnalysis = useMemo(() => {
     return BmiVarianceService.evaluatePatientHistory(patientHistory, patientInfo, bmiVarianceThreshold);
   }, [patientHistory, patientInfo.weight, patientInfo.height, patientInfo.bmi, bmiVarianceThreshold]);
+
+  // Parametry eksportu HL7 FHIR Bundle dla bieżącej wizyty
+  const currentFhirParams = useMemo<FhirExportParams>(() => {
+    const bpParts = (vitals.bp || '120/80').split('/');
+    return {
+      patientId,
+      patientInfo,
+      doctorInfo: {
+        name: 'Lek. Jan Kowalski',
+        pwz: '1234567',
+        specialization: 'Specjalista Medycyny Rodzinnej (POZ)',
+        facility: 'NZOZ Przychodnia Lekarza Rodzinnego POZ'
+      },
+      vitals: {
+        cisnienieSkurczowe: parseInt(bpParts[0], 10) || 120,
+        cisnienieRozkurczowe: parseInt(bpParts[1], 10) || 80,
+        tetno: vitals.pulse || 72,
+        temperatura: vitals.temp || 36.6,
+        waga: patientInfo.weight,
+        wzrost: patientInfo.height,
+        bmi: patientInfo.bmi
+      },
+      symptoms,
+      medications,
+      analysis,
+      visitDate: new Date().toISOString()
+    };
+  }, [patientId, patientInfo, vitals, symptoms, medications, analysis]);
 
   useEffect(() => {
     const errors: Record<string, string> = {};
@@ -240,11 +274,16 @@ export default function App() {
       <header className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-emerald-600 rounded-lg flex items-center justify-center text-white shadow-lg shadow-emerald-900/20">
-            <Shield size={24} />
+            <span className="text-xl">🩺</span>
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white">Sovereign AI Medical</h1>
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Panel Lekarza v1.0</p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-white">ADIPOZ → Professional Agent</h1>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hidden md:inline-block">
+                POZ CDSS
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 font-medium">Panel Lekarza • Twórca i Właściciel: Ewelina Lesiak</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -474,9 +513,16 @@ export default function App() {
                   <button 
                     onClick={handleAnalyze}
                     disabled={loading || !symptoms || Object.keys(validationErrors).length > 0}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 dark:disabled:bg-slate-800 text-white font-bold py-3.5 px-4 rounded-xl transition-all flex flex-col items-center justify-center gap-1 shadow-lg shadow-emerald-600/20 cursor-pointer"
+                    title="Zakończ wizytę i przekaż dane do autonomicznej analizy agenta AdiPOZ"
                   >
-                    {loading ? 'Analizowanie...' : 'Uruchom Analizę AI'}
+                    <div className="flex items-center gap-2 text-sm">
+                      <span>🏁</span>
+                      <span>{loading ? 'AdiPOZ autonomicznie analizuje przypadek...' : 'Zakończ wizytę i przekaż do AdiPOZ'}</span>
+                    </div>
+                    <span className="text-[10px] font-normal text-emerald-100 opacity-90">
+                      Autonomiczna analiza → Wskazanie uwag → Propozycje działań do zatwierdzenia
+                    </span>
                   </button>
                 </div>
               </section>
@@ -493,6 +539,15 @@ export default function App() {
             <div className="lg:col-span-7 space-y-6">
               {analysis ? (
                 <>
+                  {/* Panel Autonomicznego Agenta AdiPOZ: Workflow i Decyzja Lekarza */}
+                  <AutonomousAgentWorkflowCard
+                    analysis={analysis}
+                    patientId={patientId}
+                    patientInfo={patientInfo}
+                    bmiVarianceAnalysis={bmiVarianceAnalysis}
+                    onExportFhir={() => setIsFhirModalOpen(true)}
+                  />
+
                   {/* Gap Analysis Section */}
                   {analysis.data.gapAnalysis && analysis.data.gapAnalysis.gaps.length > 0 && (
                     <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
@@ -1083,6 +1138,14 @@ export default function App() {
                           <FileText size={13} />
                           Zbiorczy Raport PDF
                         </button>
+                        <button 
+                          onClick={() => setIsFhirModalOpen(true)}
+                          className="px-3 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                          title="Eksportuj notatkę medyczną i dane kliniczne do standardu HL7 FHIR R4 Bundle (interoperacyjność z HIS/EHR)"
+                        >
+                          <Share2 size={13} />
+                          Eksportuj HL7 FHIR
+                        </button>
                         <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${analysis.data.decision.isSafe ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                           {analysis.data.decision.isSafe ? 'Bezpieczne' : 'Wymaga Uwagi'}
                         </span>
@@ -1268,6 +1331,38 @@ export default function App() {
                             </pre>
                           </div>
                         </div>
+
+                        {/* HL7 FHIR Release 4 Bundle */}
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-3">
+                            <div className="flex items-center gap-2">
+                              <Share2 size={16} className="text-sky-400" />
+                              <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">HL7 FHIR R4 Bundle (Interoperacyjność HIS / EHR)</h3>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setIsFhirModalOpen(true)}
+                              className="text-xs font-semibold px-2.5 py-1 bg-sky-600/30 hover:bg-sky-600/50 text-sky-300 border border-sky-500/40 rounded-lg transition-colors cursor-pointer"
+                            >
+                              Otwórz eksporter FHIR
+                            </button>
+                          </div>
+                          <div className="bg-slate-900 rounded-xl p-4 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs text-sky-300 font-semibold mb-1">Standard FHIR Bundle (type: document)</p>
+                              <p className="text-[11px] text-slate-400">
+                                Zawiera zasoby: <code className="text-sky-400">Composition</code>, <code className="text-emerald-400">Patient</code>, <code className="text-indigo-400">Practitioner</code>, <code className="text-amber-400">Encounter</code>, <code className="text-rose-400">Condition</code> oraz <code className="text-cyan-400">Observations</code> (Vitals).
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setIsFhirModalOpen(true)}
+                              className="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer shadow-sm"
+                            >
+                              Podgląd i Pobranie JSON
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </section>
                   )}
@@ -1279,32 +1374,42 @@ export default function App() {
                         <FileText size={20} />
                         <h2 className="text-lg font-bold font-sans">Wygenerowana Notatka Medyczna</h2>
                       </div>
-                      <button 
-                        onClick={() => {
-                          const medsList = medications.split(',').filter(m => m.trim().length > 0).map(m => ({
-                            name: m.trim(),
-                            dosage: '1x1',
-                            quantity: '1 op.'
-                          }));
-                          const data = {
-                            patientName: patientInfo.imie && patientInfo.nazwisko ? `${patientInfo.imie} ${patientInfo.nazwisko}` : 'Jan Kowalski',
-                            patientPesel: patientInfo.pesel || '80010112345',
-                            doctorName: 'Lek. Anna Nowak',
-                            doctorPzw: '1234567',
-                            date: new Date().toISOString().split('T')[0],
-                            accessCode: Math.floor(1000 + Math.random() * 9000).toString(),
-                            medications: medsList.length > 0 ? medsList : [{ name: 'Zalecane leki z notatki', dosage: 'Według zaleceń', quantity: '1 op.' }]
-                          };
-                          import('./services/EReceptaService').then(({ EReceptaService }) => {
-                            EReceptaService.downloadJSON(data);
-                          });
-                        }}
-                        className="flex items-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 font-sans font-bold py-1.5 px-3 rounded-lg border border-emerald-500/30 transition-colors"
-                        title="Pobierz plik e-Recepty w formacie JSON P1"
-                      >
-                        <FileCode size={16} />
-                        Pobierz e-Receptę (JSON P1)
-                      </button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button 
+                          onClick={() => setIsFhirModalOpen(true)}
+                          className="flex items-center gap-2 bg-sky-600/25 hover:bg-sky-600/45 text-sky-300 font-sans font-bold py-1.5 px-3 rounded-lg border border-sky-500/40 transition-colors cursor-pointer"
+                          title="Eksportuj wygenerowaną notatkę medyczną do formatu HL7 FHIR Bundle zgodnego z HIS/EHR"
+                        >
+                          <Share2 size={16} />
+                          Eksportuj HL7 FHIR (HIS/EHR)
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const medsList = medications.split(',').filter(m => m.trim().length > 0).map(m => ({
+                              name: m.trim(),
+                              dosage: '1x1',
+                              quantity: '1 op.'
+                            }));
+                            const data = {
+                              patientName: patientInfo.imie && patientInfo.nazwisko ? `${patientInfo.imie} ${patientInfo.nazwisko}` : 'Jan Kowalski',
+                              patientPesel: patientInfo.pesel || '80010112345',
+                              doctorName: 'Lek. Anna Nowak',
+                              doctorPzw: '1234567',
+                              date: new Date().toISOString().split('T')[0],
+                              accessCode: Math.floor(1000 + Math.random() * 9000).toString(),
+                              medications: medsList.length > 0 ? medsList : [{ name: 'Zalecane leki z notatki', dosage: 'Według zaleceń', quantity: '1 op.' }]
+                            };
+                            import('./services/EReceptaService').then(({ EReceptaService }) => {
+                              EReceptaService.downloadJSON(data);
+                            });
+                          }}
+                          className="flex items-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 font-sans font-bold py-1.5 px-3 rounded-lg border border-emerald-500/30 transition-colors cursor-pointer"
+                          title="Pobierz plik e-Recepty w formacie JSON P1"
+                        >
+                          <FileCode size={16} />
+                          Pobierz e-Receptę (JSON P1)
+                        </button>
+                      </div>
                     </div>
                     <div className="absolute top-6 right-6 opacity-10">
                       <Shield size={120} />
@@ -1357,6 +1462,25 @@ export default function App() {
             <Chat isSovereignMode={isSovereignMode} patientInfo={patientInfo} />
           </div>
         )}
+
+        <footer id="app-footer" className="mt-8 pt-4 pb-6 border-t border-slate-200/80 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">🩺 ADIPOZ → Professional Agent</span> &copy; 2026 <strong className="text-slate-800 dark:text-slate-200">Ewelina Lesiak</strong>. Wszelkie prawa zastrzeżone.
+          </div>
+          <div className="flex items-center gap-3">
+            <a 
+              id="download-docs-pdf-link"
+              href="/dokumentacja_technologiczna_adipoz.pdf" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 font-medium inline-flex items-center gap-1 hover:underline"
+            >
+              📄 Dokumentacja Technologiczna (PDF)
+            </a>
+            <span>•</span>
+            <span className="text-slate-400 dark:text-slate-500">Licencja Własnościowa (Proprietary)</span>
+          </div>
+        </footer>
       </main>
 
       <SettingsModal 
@@ -1374,6 +1498,13 @@ export default function App() {
         heightCm={patientInfo.height}
         existingGoal={weightGoal}
         onGoalUpdated={(updatedGoal) => setWeightGoal(updatedGoal)}
+      />
+
+      {/* Modal Eksportu do HL7 FHIR Bundle (HIS / EHR) */}
+      <FhirExportModal
+        isOpen={isFhirModalOpen}
+        onClose={() => setIsFhirModalOpen(false)}
+        params={currentFhirParams}
       />
     </div>
   );

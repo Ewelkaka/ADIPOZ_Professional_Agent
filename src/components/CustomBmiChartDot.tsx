@@ -24,7 +24,7 @@ export const CustomBmiChartDot: React.FC<CustomBmiChartDotProps> = ({
   onSelectVisit,
   showMedicationBadges = true,
 }) => {
-  if (cx === undefined || cy === undefined || !payload) return null;
+  if (cx === undefined || cy === undefined || isNaN(cx) || isNaN(cy) || !payload) return null;
 
   const hasNewMed = Boolean(payload.hasNewMedication && payload.newMedications && payload.newMedications.length > 0);
   const firstNewMed = hasNewMed ? payload.newMedications![0] : '';
@@ -148,9 +148,9 @@ export const CustomBmiXAxisTick: React.FC<CustomBmiXAxisTickProps> = ({
   data = [],
   onSelectVisit,
 }) => {
-  if (!payload) return null;
+  if (!payload || x === undefined || y === undefined || isNaN(x) || isNaN(y)) return null;
 
-  const pointData = data.find(d => d.date === payload.value) || data[payload.index];
+  const pointData = data.find(d => d.date === payload.value) || (payload.index !== undefined ? data[payload.index] : undefined);
   const hasNewMed = Boolean(pointData?.hasNewMedication);
 
   const handleClick = (e: React.MouseEvent) => {

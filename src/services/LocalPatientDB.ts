@@ -17,9 +17,10 @@ export class LocalPatientDB {
   private STORAGE_KEY = 'adi_poz_patient_history';
 
   private async loadHistory(): Promise<Map<string, AnalysisRecord[]>> {
-    const data = localStorage.getItem(this.STORAGE_KEY);
-    if (!data) return new Map();
     try {
+      if (typeof window === 'undefined' || !window.localStorage) return new Map();
+      const data = localStorage.getItem(this.STORAGE_KEY);
+      if (!data) return new Map();
       const parsed = JSON.parse(data);
       return new Map(Object.entries(parsed));
     } catch (e) {
@@ -29,8 +30,14 @@ export class LocalPatientDB {
   }
 
   private async saveHistory(history: Map<string, AnalysisRecord[]>) {
-    const obj = Object.fromEntries(history);
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(obj));
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const obj = Object.fromEntries(history);
+        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(obj));
+      }
+    } catch (e) {
+      console.error("Failed to save patient history to localStorage:", e);
+    }
   }
 
   async saveAnalysis(patientId: string, symptoms: string, medications: string, vitals: any, analysis: any, patientInfo?: any) {

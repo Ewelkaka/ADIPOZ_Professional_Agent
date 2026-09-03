@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import OpenAI from "openai";
 import dotenv from "dotenv";
 
@@ -9,13 +10,15 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// Request Logging Middleware
+// Request Logging Middleware for API endpoints
 app.use((req, res, next) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
-  });
+  if (req.url.startsWith('/api')) {
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+    });
+  }
   next();
 });
 
@@ -81,6 +84,18 @@ app.post("/api/chat/openai", async (req, res, next) => {
 
     console.error("[OpenAI] Error:", error);
     next(error);
+  }
+});
+
+// Endpoint pobierania dokumentacji technologicznej PDF
+app.get(["/api/documentation/pdf", "/dokumentacja_technologiczna_adipoz.pdf"], (req, res) => {
+  const pdfPath = path.join(process.cwd(), "public", "dokumentacja_technologiczna_adipoz.pdf");
+  if (fs.existsSync(pdfPath)) {
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'inline; filename="dokumentacja_technologiczna_adipoz.pdf"');
+    res.sendFile(pdfPath);
+  } else {
+    res.status(404).json({ error: "Dokumentacja PDF nie została odnaleziona." });
   }
 });
 
