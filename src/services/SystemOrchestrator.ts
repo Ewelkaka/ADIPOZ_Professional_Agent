@@ -67,7 +67,16 @@ export class SystemOrchestrator {
     }
     
     // 7. DecisionEngine --- logika + alerty
-    const decision = this.decisionEngine.process(aiOutput, vitals);
+    const decision = this.decisionEngine.process(aiOutput, vitals, history, patientInfo);
+    
+    // 7.1. Powiadomienie o alercie wariancji BMI
+    if (decision.bmiVariance && decision.bmiVariance.hasAlert) {
+      NotificationService.addNotification(
+        'WARNING',
+        decision.bmiVariance.title,
+        decision.bmiVariance.message
+      );
+    }
     
     // 8. Human in the loop
     const isApproved = await this.hitl.requireDoctorConfirmation({

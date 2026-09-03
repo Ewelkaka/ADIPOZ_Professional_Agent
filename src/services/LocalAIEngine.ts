@@ -10,7 +10,7 @@ export class LocalAIEngine {
   }
 
   async analyzeSymptoms(symptoms: string, medications: string, history: AnalysisRecord[], patientInfo: any = {}) {
-    const model = "gemini-3-flash-preview";
+    const model = "gemini-2.5-flash";
     const icd10Context = JSON.stringify(ICD10_CODES, null, 2);
     
     // Przygotowanie kontekstu pacjenta

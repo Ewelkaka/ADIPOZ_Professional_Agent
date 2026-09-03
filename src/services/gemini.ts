@@ -140,7 +140,7 @@ DANE PACJENTA (KONTEKST):
       ];
 
       const responseStream = await ai.models.generateContentStream({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         contents: contents,
         config: {
           systemInstruction: SYSTEM_PROMPT,
@@ -335,7 +335,7 @@ DANE PACJENTA (KONTEKST):
       }
     } else if (mode === "search") {
       const responseStream = await ai.models.generateContentStream({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash",
         contents: message,
         config: {
           systemInstruction: "Jesteś asystentem medycznym wyszukującym aktualne wytyczne i informacje dla lekarzy POZ w Polsce. Zawsze podawaj źródła i linki do znalezionych informacji. Odpowiadaj zwięźle i profesjonalnie.",
@@ -378,8 +378,27 @@ DANE PACJENTA (KONTEKST):
     }
   } catch (error: any) {
     console.error("[Gemini] Error calling Gemini API:", error);
-    const errorMessage = error.message || "Wystąpił nieoczekiwany błąd podczas komunikacji z AI.";
-    const errorCode = error.status || "UNKNOWN_ERROR";
+    
+    let errorMessage = "Wystąpił nieoczekiwany błąd podczas komunikacji z AI.";
+    if (error?.message) {
+      try {
+        const parsed = JSON.parse(error.message);
+        if (parsed?.error?.message) {
+          if (parsed.error.code === 429 || parsed.error.status === "RESOURCE_EXHAUSTED" || parsed.error.message.includes("Quota exceeded")) {
+            errorMessage = "Osiągnięto chwilowy limit zapytań do Gemini API (429). Prosimy spróbować ponownie za chwilę.";
+          } else {
+            errorMessage = parsed.error.message;
+          }
+        }
+      } catch {
+        if (error.message.includes("429") || error.message.includes("RESOURCE_EXHAUSTED") || error.message.includes("Quota exceeded")) {
+          errorMessage = "Osiągnięto chwilowy limit zapytań do Gemini API (429). Prosimy spróbować ponownie za chwilę.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+    }
+    const errorCode = error?.status || error?.code || 500;
     
     throw new Error(JSON.stringify({
       error: errorMessage,

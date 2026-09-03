@@ -306,7 +306,7 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ChatMode>("analysis");
-  const [modelType, setModelType] = useState<"gemini" | "gpt4o">("gpt4o");
+  const [modelType, setModelType] = useState<"gemini" | "gpt4o">("gemini");
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -487,27 +487,52 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
           }
         }
       } else if (modelType === "gpt4o" && mode === "analysis") {
-        // Truncate history to avoid token limits (last 10 messages)
-        const history = messages
-          .filter(m => m.mode === "analysis")
-          .slice(-10)
-          .map(m => ({
-            role: m.role === "user" ? "user" : "assistant",
-            content: m.content
-          }));
-        
-        const stream = streamOpenAIChat([...history, { role: "user", content: userMessage.content }]);
-        
-        let fullResponse = "";
-        for await (const chunk of stream) {
-          fullResponse += chunk;
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === modelMessageId
-                ? { ...msg, content: fullResponse }
-                : msg
-            )
-          );
+        try {
+          // Truncate history to avoid token limits (last 10 messages)
+          const history = messages
+            .filter(m => m.mode === "analysis")
+            .slice(-10)
+            .map(m => ({
+              role: m.role === "user" ? "user" : "assistant",
+              content: m.content
+            }));
+          
+          const stream = streamOpenAIChat([...history, { role: "user", content: userMessage.content }]);
+          
+          let fullResponse = "";
+          for await (const chunk of stream) {
+            fullResponse += chunk;
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === modelMessageId
+                  ? { ...msg, content: fullResponse }
+                  : msg
+              )
+            );
+          }
+        } catch (openaiErr: any) {
+          console.warn("[Chat] OpenAI unavailable (429/biling), falling back to Gemini:", openaiErr);
+          // Fallback to Gemini
+          const fallbackHistory = messages
+            .filter(m => m.mode === "analysis")
+            .slice(-10)
+            .map(m => ({
+              role: m.role,
+              parts: [{ text: m.content }]
+            }));
+
+          const fallbackStream = streamChatResponse(userMessage.content, mode, fallbackHistory, latLng, patientInfo);
+          let fullResponse = "*(Uwaga: Usługa OpenAI zgłosiła błąd konta/limitu 429. Odpowiedź wygenerowana awaryjnie przez model Gemini)*\n\n";
+          for await (const chunk of fallbackStream) {
+            fullResponse += chunk;
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === modelMessageId
+                  ? { ...msg, content: fullResponse }
+                  : msg
+              )
+            );
+          }
         }
       } else {
         // Fallback to Gemini for other modes or if selected
@@ -542,16 +567,20 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
         displayError = "Błąd sieci: Nie można połączyć się z serwerem. Sprawdź swoje połączenie internetowe.";
       } else if (error.message && error.message.includes("401")) {
         displayError = "Błąd uwierzytelnienia: Brak uprawnień do korzystania z API. Sprawdź klucz API.";
-      } else if (error.message && error.message.includes("429")) {
-        displayError = "Osiągnięto limit zapytań do API. Spróbuj ponownie za chwilę.";
-      } else if (error.message && error.message.includes("500")) {
-        displayError = "Błąd serwera AI: Serwer napotkał problem. Spróbuj ponownie później.";
       } else {
         try {
           const parsed = JSON.parse(error.message);
-          if (parsed.error) displayError = `${parsed.service || 'System'}: ${parsed.error}`;
+          if (parsed.error) displayError = parsed.error;
         } catch {
-          displayError = error.message || displayError;
+          if (error.message && (error.message.includes("not active") || (error.message.includes("429") && modelType === "gpt4o"))) {
+            displayError = "Konto OpenAI jest nieaktywne lub osiągnięto limit zapytań (429). Zalecamy korzystanie z modelu Gemini.";
+          } else if (error.message && (error.message.includes("429") || error.message.includes("RESOURCE_EXHAUSTED"))) {
+            displayError = "Chwilowo osiągnięto limit zapytań do API (429). Odczekaj chwilę i spróbuj ponownie.";
+          } else if (error.message && error.message.includes("500")) {
+            displayError = "Błąd serwera AI: Serwer napotkał problem. Spróbuj ponownie później.";
+          } else {
+            displayError = error.message || displayError;
+          }
         }
       }
       
@@ -615,26 +644,47 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
           )
         );
       } else if (modelType === "gpt4o") {
-        const history = messages
-          .filter(m => m.mode === "analysis")
-          .slice(-10)
-          .map(m => ({
-            role: m.role === "user" ? "user" : "assistant",
-            content: m.content
+        try {
+          const history = messages
+            .filter(m => m.mode === "analysis")
+            .slice(-10)
+            .map(m => ({
+              role: m.role === "user" ? "user" : "assistant",
+              content: m.content
+            }));
+          
+          const stream = streamOpenAIChat([...history, { role: "user", content: userMessage.content }]);
+          
+          let fullResponse = "";
+          for await (const chunk of stream) {
+            fullResponse += chunk;
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === modelMessageId
+                  ? { ...msg, content: fullResponse }
+                  : msg
+              )
+            );
+          }
+        } catch (openaiErr: any) {
+          console.warn("[Chat] OpenAI unavailable in summarize, falling back to Gemini:", openaiErr);
+          const fallbackHistory = messages.filter(m => m.mode === "analysis").slice(-10).map(m => ({
+            role: m.role,
+            parts: [{ text: m.content }]
           }));
-        
-        const stream = streamOpenAIChat([...history, { role: "user", content: userMessage.content }]);
-        
-        let fullResponse = "";
-        for await (const chunk of stream) {
-          fullResponse += chunk;
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === modelMessageId
-                ? { ...msg, content: fullResponse }
-                : msg
-            )
-          );
+
+          const fallbackStream = streamChatResponse(userMessage.content, "analysis", fallbackHistory, undefined, patientInfo);
+          let fullResponse = "*(Uwaga: Usługa OpenAI zgłosiła błąd 429. Podsumowanie wygenerowane awaryjnie przez Gemini)*\n\n";
+          for await (const chunk of fallbackStream) {
+            fullResponse += chunk;
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === modelMessageId
+                  ? { ...msg, content: fullResponse }
+                  : msg
+              )
+            );
+          }
         }
       } else {
         const history = messages.filter(m => m.mode === "analysis").slice(-10).map(m => ({
@@ -661,9 +711,13 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
       let displayError = "Wystąpił błąd podczas generowania podsumowania.";
       try {
         const parsed = JSON.parse(error.message);
-        if (parsed.error) displayError = `${parsed.service || 'System'}: ${parsed.error}`;
+        if (parsed.error) displayError = parsed.error;
       } catch {
-        displayError = error.message || displayError;
+        if (error.message?.includes("429") || error.message?.includes("RESOURCE_EXHAUSTED")) {
+          displayError = "Chwilowo osiągnięto limit zapytań do API (429). Odczekaj chwilę i spróbuj ponownie.";
+        } else {
+          displayError = error.message || displayError;
+        }
       }
       setError(displayError);
       setMessages((prev) => prev.filter(msg => msg.id !== modelMessageId));
@@ -780,24 +834,26 @@ export default function Chat({ isSovereignMode = false, patientInfo = {} }: Chat
 
           <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">
             <button
-              onClick={() => setModelType("gpt4o")}
-              className={cn(
-                "px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
-                modelType === "gpt4o" ? "bg-white dark:bg-slate-700 text-amber-600 dark:text-amber-400 shadow-sm" : "text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200"
-              )}
-            >
-              <Zap size={16} className={modelType === "gpt4o" ? "text-amber-500" : ""} />
-              GPT-4o
-            </button>
-            <button
               onClick={() => setModelType("gemini")}
               className={cn(
                 "px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
                 modelType === "gemini" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200"
               )}
+              title="Google Gemini (aktywny model domyślny)"
             >
               <Sparkles size={16} className={modelType === "gemini" ? "text-indigo-500" : ""} />
               Gemini
+            </button>
+            <button
+              onClick={() => setModelType("gpt4o")}
+              className={cn(
+                "px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
+                modelType === "gpt4o" ? "bg-white dark:bg-slate-700 text-amber-600 dark:text-amber-400 shadow-sm" : "text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200"
+              )}
+              title="OpenAI GPT-4o (z automatycznym fallbackiem do Gemini w razie limitu)"
+            >
+              <Zap size={16} className={modelType === "gpt4o" ? "text-amber-500" : ""} />
+              GPT-4o
             </button>
           </div>
           

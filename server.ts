@@ -67,6 +67,18 @@ app.post("/api/chat/openai", async (req, res, next) => {
     res.end();
     console.log("[OpenAI] Stream completed successfully");
   } catch (error: any) {
+    const status = error.status || error.statusCode || 500;
+    const isRateLimitOrBilling = status === 429 || (error.message && (error.message.includes("429") || error.message.includes("billing") || error.message.includes("not active")));
+
+    if (isRateLimitOrBilling) {
+      console.warn(`[OpenAI] RateLimit or inactive account (429): ${error.message}`);
+      return res.status(429).json({
+        error: "Konto OpenAI jest nieaktywne lub przekroczyło limit zapytań (429).",
+        details: error.message,
+        code: "OPENAI_RATE_LIMIT"
+      });
+    }
+
     console.error("[OpenAI] Error:", error);
     next(error);
   }

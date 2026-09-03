@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { SystemOrchestrator } from './services/SystemOrchestrator';
-import { AlertCircle, FileText, History as HistoryIcon, Shield, User, Activity, Pill, CheckCircle2, XCircle, Settings as SettingsIcon, Database, AlertTriangle, Share2, Code, Terminal, ChevronLeft, UserCircle, FileCode } from 'lucide-react';
+import { AlertCircle, FileText, History as HistoryIcon, Shield, User, Activity, Pill, CheckCircle2, XCircle, Settings as SettingsIcon, Database, AlertTriangle, Share2, Code, Terminal, ChevronLeft, UserCircle, FileCode, FileSpreadsheet, Calendar, Target } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { SettingsService, UserSettings } from './services/SettingsService';
 import { NotificationCenter } from './components/NotificationCenter';
@@ -10,7 +10,14 @@ import { History } from './components/History';
 import Chat from './components/Chat';
 import { PatientView } from './components/PatientView';
 import { generatePatientReportPDF } from './lib/pdfGenerator';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { exportAndDownloadSingleVisit } from './lib/csvExporter';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, ReferenceArea } from 'recharts';
+import { CustomBmiTooltip, BmiChartPointData } from './components/CustomBmiTooltip';
+import { WeightGoalService, WeightGoal } from './services/WeightGoalService';
+import { WeightGoalCard } from './components/WeightGoalCard';
+import { WeightGoalModal } from './components/WeightGoalModal';
+import { BmiVarianceService, BmiVarianceAnalysis } from './services/BmiVarianceService';
+import { BmiVarianceCard } from './components/BmiVarianceCard';
 
 const orchestrator = new SystemOrchestrator();
 const patientDB = new LocalPatientDB();
@@ -38,8 +45,21 @@ export default function App() {
   const [settings, setSettings] = useState<UserSettings>(SettingsService.getSettings());
   const [view, setView] = useState<'analysis' | 'history' | 'chat' | 'patient'>('analysis');
   const [patientHistory, setPatientHistory] = useState<AnalysisRecord[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [isSovereignMode, setIsSovereignMode] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+
+  // Stan Celów Wagi Pacjenta
+  const [weightGoal, setWeightGoal] = useState<WeightGoal | null>(null);
+  const [isWeightGoalModalOpen, setIsWeightGoalModalOpen] = useState(false);
+  const [showGoalReferenceLine, setShowGoalReferenceLine] = useState(true);
+
+  // Stan Wariancji i Dynamiki BMI między ostatnimi wizytami
+  const [bmiVarianceThreshold, setBmiVarianceThreshold] = useState<number>(2.0);
+
+  const bmiVarianceAnalysis = useMemo(() => {
+    return BmiVarianceService.evaluatePatientHistory(patientHistory, patientInfo, bmiVarianceThreshold);
+  }, [patientHistory, patientInfo.weight, patientInfo.height, patientInfo.bmi, bmiVarianceThreshold]);
 
   useEffect(() => {
     const errors: Record<string, string> = {};
@@ -58,7 +78,21 @@ export default function App() {
   useEffect(() => {
     NotificationService.requestPermission();
     loadHistory();
+    loadWeightGoal();
+
+    const handleGoalEvent = () => {
+      loadWeightGoal();
+    };
+    window.addEventListener('weight-goal-changed', handleGoalEvent);
+    return () => {
+      window.removeEventListener('weight-goal-changed', handleGoalEvent);
+    };
   }, [patientId]);
+
+  const loadWeightGoal = () => {
+    const goal = WeightGoalService.getGoal(patientId);
+    setWeightGoal(goal);
+  };
 
   const loadHistory = async () => {
     const history = await patientDB.getHistory(patientId);
@@ -93,22 +127,96 @@ export default function App() {
     setSymptoms(record.symptoms);
     setMedications(record.medications);
     setVitals(record.vitals);
+    setSelectedHistoryId(record.id);
     setView('analysis');
+  };
+
+  const handleNavigateToHistoryVisit = (recordId: string) => {
+    setSelectedHistoryId(recordId);
+    setView('history');
+    const matchedRecord = patientHistory.find(r => r.id === recordId);
+    const dateStr = matchedRecord ? new Date(matchedRecord.timestamp).toLocaleDateString('pl-PL') : '';
+    NotificationService.addNotification(
+      'INFO',
+      'Przejście do historii wizyty',
+      `Zaznaczono wizytę z dnia ${dateStr || 'wybranego pomiaru'} z wykresu BMI.`
+    );
   };
 
   const bpChartData = useMemo(() => {
     return patientHistory
-      .filter(record => record.vitals && typeof record.vitals.bp === 'string' && record.vitals.bp.includes('/'))
+      .filter(record => record.vitals && ((typeof record.vitals.bp === 'string' && record.vitals.bp.includes('/')) || record.vitals.pulse))
       .map(record => {
-        const [sys, dia] = record.vitals.bp.split('/').map(Number);
+        let sys: number | null = null;
+        let dia: number | null = null;
+        if (record.vitals && typeof record.vitals.bp === 'string' && record.vitals.bp.includes('/')) {
+          const parts = record.vitals.bp.split('/').map(Number);
+          sys = !isNaN(parts[0]) ? parts[0] : null;
+          dia = !isNaN(parts[1]) ? parts[1] : null;
+        }
+        const pulse = record.vitals?.pulse !== undefined && record.vitals?.pulse !== null && !isNaN(Number(record.vitals.pulse))
+          ? Number(record.vitals.pulse)
+          : null;
         return {
           date: new Date(record.timestamp).toLocaleDateString(),
           systolic: sys,
-          diastolic: dia
+          diastolic: dia,
+          pulse: pulse
         };
       })
       .reverse();
   }, [patientHistory]);
+
+  const bmiChartData: BmiChartPointData[] = useMemo(() => {
+    const data: BmiChartPointData[] = patientHistory
+      .filter(record => {
+        if (!record.patientInfo) return false;
+        const bmi = record.patientInfo.bmi || (record.patientInfo.weight && record.patientInfo.height ? parseFloat((record.patientInfo.weight / Math.pow(record.patientInfo.height / 100, 2)).toFixed(1)) : null);
+        return bmi !== null && !isNaN(Number(bmi));
+      })
+      .map(record => {
+        const bmi = record.patientInfo.bmi || (record.patientInfo.weight && record.patientInfo.height ? parseFloat((record.patientInfo.weight / Math.pow(record.patientInfo.height / 100, 2)).toFixed(1)) : null);
+        return {
+          recordId: record.id,
+          timestamp: record.timestamp,
+          date: new Date(record.timestamp).toLocaleDateString('pl-PL'),
+          time: new Date(record.timestamp).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
+          bmi: Number(bmi),
+          weight: record.patientInfo?.weight ? Number(record.patientInfo.weight) : undefined,
+          height: record.patientInfo?.height ? Number(record.patientInfo.height) : undefined,
+          diagnosis: record.analysis?.decision?.diagnosis || 'Wizyta lekarska',
+          icd10Code: record.analysis?.decision?.icd10Code,
+          symptoms: record.symptoms,
+          medications: record.medications,
+          isSafeMeds: record.analysis?.medAnalysis?.isSafe
+        };
+      })
+      .reverse();
+
+    if (data.length === 0 && patientInfo && patientInfo.bmi) {
+      data.push({
+        recordId: undefined,
+        timestamp: Date.now(),
+        date: new Date().toLocaleDateString('pl-PL'),
+        time: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
+        bmi: Number(patientInfo.bmi),
+        weight: patientInfo.weight ? Number(patientInfo.weight) : undefined,
+        height: patientInfo.height ? Number(patientInfo.height) : undefined,
+        diagnosis: 'Bieżący profil pacjenta',
+        icd10Code: undefined,
+        symptoms: symptoms,
+        medications: medications,
+        isSafeMeds: true
+      });
+    }
+
+    return data;
+  }, [patientHistory, patientInfo, symptoms, medications]);
+
+  const targetBmi = useMemo(() => {
+    if (!weightGoal?.targetWeight || !patientInfo?.height) return null;
+    return WeightGoalService.calculateBmi(weightGoal.targetWeight, patientInfo.height);
+  }, [weightGoal?.targetWeight, patientInfo?.height]);
 
   const handleDeleteHistory = async (id: string) => {
     await patientDB.deleteAnalysis(patientId, id);
@@ -229,8 +337,19 @@ export default function App() {
                         />
                       </div>
                       <div className="mt-1 flex justify-between items-center">
-                        <div className="text-[10px] text-slate-500 font-bold uppercase">
-                          BMI: <span className={patientInfo.bmi > 25 ? "text-amber-600" : "text-emerald-600"}>{patientInfo.bmi}</span>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1.5">
+                          <span>BMI: <span className={patientInfo.bmi > 25 ? "text-amber-600" : "text-emerald-600"}>{patientInfo.bmi}</span></span>
+                          {bmiVarianceAnalysis && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                              bmiVarianceAnalysis.hasAlert 
+                                ? bmiVarianceAnalysis.alertType === 'RAPID_LOSS' 
+                                  ? 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                                  : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                            }`}>
+                              Δ {bmiVarianceAnalysis.deltaBmi > 0 ? `+${bmiVarianceAnalysis.deltaBmi}` : bmiVarianceAnalysis.deltaBmi} pkt
+                            </span>
+                          )}
                         </div>
                         <div className="flex gap-2">
                           {Object.values(validationErrors).map((err, i) => (
@@ -238,6 +357,20 @@ export default function App() {
                           ))}
                         </div>
                       </div>
+                      {bmiVarianceAnalysis?.hasAlert && (
+                        <div className={`mt-2 p-2 rounded-lg border text-xs flex items-center gap-2 ${
+                          bmiVarianceAnalysis.alertType === 'RAPID_LOSS'
+                            ? 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-200 dark:border-red-900/60'
+                            : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900/60'
+                        }`}>
+                          <AlertTriangle size={14} className={`shrink-0 ${bmiVarianceAnalysis.alertType === 'RAPID_LOSS' ? 'text-red-600' : 'text-amber-600'}`} />
+                          <span className="font-semibold text-[11px] leading-tight">
+                            {bmiVarianceAnalysis.alertType === 'RAPID_LOSS' 
+                              ? `⚠️ Alert: Zbyt szybka utrata masy ciała (${bmiVarianceAnalysis.deltaBmi} pkt BMI)` 
+                              : `⚠️ Alert: Zbyt szybki przyrost masy ciała (+${bmiVarianceAnalysis.deltaBmi} pkt BMI)`}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     
                     <div>
@@ -426,28 +559,409 @@ export default function App() {
                     )}
                   </section>
 
-                  {/* BP History Chart */}
-                  {bpChartData.length > 0 && (
-                    <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
-                      <div className="flex items-center gap-2 mb-6">
-                        <Activity className="text-blue-600" size={20} />
-                        <h2 className="text-lg font-bold dark:text-slate-100">Historia Ciśnienia Tętniczego</h2>
+                  {/* BP & BMI History Charts */}
+                  {(bpChartData.length > 0 || bmiChartData.length > 0) && (
+                    <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 space-y-8">
+                      {/* Wykres 1: Ciśnienie i Tętno */}
+                      <div>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
+                          <div className="flex items-center gap-2">
+                            <Activity className="text-blue-600" size={20} />
+                            <h2 className="text-lg font-bold dark:text-slate-100">Historia Ciśnienia Tętniczego i Tętna</h2>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 rounded-lg border border-red-200 dark:border-red-900/50" title="Kliniczny próg rozpoznania nadciśnienia tętniczego wg wytycznych PTNT/ESC">
+                              <AlertTriangle size={13} className="text-red-600 dark:text-red-400" />
+                              Strefa nadciśnienia: &ge; 140 / 90 mmHg
+                            </span>
+                          </div>
+                        </div>
+                        {bpChartData.length > 0 ? (
+                          <div className="h-72 w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={bpChartData} margin={{ top: 15, right: 30, bottom: 5, left: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
+                                <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickMargin={10} />
+                                <YAxis 
+                                  stroke="#64748b" 
+                                  fontSize={12} 
+                                  domain={[40, (dataMax: number) => Math.max(160, isNaN(dataMax) ? 160 : Number(dataMax) + 10)]}
+                                  unit=" mmHg"
+                                />
+                                <Tooltip
+                                  contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                  itemStyle={{ color: '#e2e8f0' }}
+                                  formatter={(value: any, name: any) => {
+                                    if (value === null || value === undefined) return ['Brak danych', name];
+                                    if (name === 'Skurczowe (mmHg)') {
+                                      const isHigh = Number(value) >= 140;
+                                      return [`${value} mmHg ${isHigh ? '⚠️ (Nadciśnienie ≥140)' : '✓ (W normie)'}`, name];
+                                    }
+                                    if (name === 'Rozkurczowe (mmHg)') {
+                                      const isHigh = Number(value) >= 90;
+                                      return [`${value} mmHg ${isHigh ? '⚠️ (Nadciśnienie ≥90)' : '✓ (W normie)'}`, name];
+                                    }
+                                    if (name === 'Tętno (BPM)') {
+                                      return [`${value} BPM`, name];
+                                    }
+                                    return [value, name];
+                                  }}
+                                />
+                                <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+                                
+                                {/* Wizualne wskaźniki i strefy progowe (Threshold Alerts) */}
+                                <ReferenceArea 
+                                  y1={140} 
+                                  fill="#ef4444" 
+                                  fillOpacity={0.08} 
+                                  stroke="#ef4444" 
+                                  strokeOpacity={0.2} 
+                                  strokeDasharray="3 3" 
+                                />
+                                <ReferenceLine 
+                                  y={140} 
+                                  stroke="#ef4444" 
+                                  strokeWidth={1.5} 
+                                  strokeDasharray="4 4" 
+                                  label={{ 
+                                    value: 'Próg skurczowy: 140 mmHg', 
+                                    fill: '#ef4444', 
+                                    fontSize: 11, 
+                                    fontWeight: 600,
+                                    position: 'insideTopRight' 
+                                  }} 
+                                />
+                                <ReferenceLine 
+                                  y={90} 
+                                  stroke="#f59e0b" 
+                                  strokeWidth={1.5} 
+                                  strokeDasharray="4 4" 
+                                  label={{ 
+                                    value: 'Próg rozkurczowy: 90 mmHg', 
+                                    fill: '#d97706', 
+                                    fontSize: 11, 
+                                    fontWeight: 600,
+                                    position: 'insideTopRight' 
+                                  }} 
+                                />
+
+                                <Line type="monotone" dataKey="systolic" name="Skurczowe (mmHg)" stroke="#ef4444" strokeWidth={3} dot={{ r: 4, fill: '#ef4444' }} activeDot={{ r: 6 }} connectNulls />
+                                <Line type="monotone" dataKey="diastolic" name="Rozkurczowe (mmHg)" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4, fill: '#3b82f6' }} activeDot={{ r: 6 }} connectNulls />
+                                <Line type="monotone" dataKey="pulse" name="Tętno (BPM)" stroke="#10b981" strokeWidth={3} dot={{ r: 4, fill: '#10b981' }} activeDot={{ r: 6 }} connectNulls />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-500 dark:text-slate-400 italic">Brak zarejestrowanych pomiarów ciśnienia lub tętna w historii.</p>
+                        )}
                       </div>
-                      <div className="h-64 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={bpChartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
-                            <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickMargin={10} />
-                            <YAxis stroke="#64748b" fontSize={12} domain={['auto', 'auto']} />
-                            <Tooltip
-                              contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc' }}
-                              itemStyle={{ color: '#e2e8f0' }}
-                            />
-                            <Legend wrapperStyle={{ fontSize: '12px' }} />
-                            <Line type="monotone" dataKey="systolic" name="Skurczowe (mmHg)" stroke="#ef4444" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                            <Line type="monotone" dataKey="diastolic" name="Rozkurczowe (mmHg)" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                          </LineChart>
-                        </ResponsiveContainer>
+
+                      {/* Wykres 2: Historia BMI i Wagi */}
+                      <div className="border-t border-slate-100 dark:border-slate-800 pt-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                          <div className="flex items-center gap-2">
+                            <Activity className="text-purple-600 dark:text-purple-400" size={20} />
+                            <h2 className="text-lg font-bold dark:text-slate-100">Historia Wskaźnika BMI i Wagi Pacjenta</h2>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {patientInfo?.weight && (
+                              <span className="text-xs font-semibold px-3 py-1 bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 rounded-full border border-cyan-200 dark:border-cyan-800/50 self-start sm:self-auto">
+                                Aktualna waga: <strong>{patientInfo.weight} kg</strong>
+                              </span>
+                            )}
+                            {patientInfo?.bmi && (
+                              <span className="text-xs font-semibold px-3 py-1 bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 rounded-full border border-purple-200 dark:border-purple-800/50 self-start sm:self-auto">
+                                Aktualne BMI: <strong>{patientInfo.bmi}</strong>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Legenda kategorii BMI */}
+                        <div className="flex flex-wrap items-center gap-2 text-xs mb-5">
+                          <span className="text-slate-500 dark:text-slate-400 font-medium">Kategorie BMI:</span>
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-900/40 font-medium" title="BMI poniżej 18.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-500"></span> Niedowaga (&lt; 18.5)
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/40 font-medium" title="BMI w przedziale 18.5 - 24.9">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Norma (18.5 - 24.9)
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900/40 font-medium" title="BMI w przedziale 25.0 - 29.9">
+                            <span className="w-2 h-2 rounded-full bg-amber-500"></span> Nadwaga (25.0 - 29.9)
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-900/40 font-medium" title="BMI 30.0 i więcej">
+                            <span className="w-2 h-2 rounded-full bg-red-500"></span> Otyłość (&ge; 30.0)
+                          </span>
+                        </div>
+
+                        {/* Karta Wariancji BMI i Alertów Dynamiki między ostatnimi wizytami */}
+                        <BmiVarianceCard
+                          varianceAnalysis={bmiVarianceAnalysis}
+                          onNavigateToVisit={handleNavigateToHistoryVisit}
+                          threshold={bmiVarianceThreshold}
+                          onThresholdChange={setBmiVarianceThreshold}
+                        />
+
+                        {/* Karta i moduł Celów Wagi Pacjenta */}
+                        <WeightGoalCard
+                          goal={weightGoal}
+                          currentWeight={patientInfo?.weight || 0}
+                          heightCm={patientInfo?.height || 0}
+                          onOpenModal={() => setIsWeightGoalModalOpen(true)}
+                          showReferenceLine={showGoalReferenceLine}
+                          onToggleReferenceLine={() => setShowGoalReferenceLine(prev => !prev)}
+                        />
+
+                        {bmiChartData.length > 0 ? (
+                          <div className="h-72 w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart 
+                                data={bmiChartData} 
+                                margin={{ top: 15, right: 35, bottom: 5, left: 10 }}
+                                onClick={(e: any) => {
+                                  if (e && e.activePayload && e.activePayload.length) {
+                                    const pointData = e.activePayload[0].payload;
+                                    if (pointData?.recordId) {
+                                      handleNavigateToHistoryVisit(pointData.recordId);
+                                    }
+                                  }
+                                }}
+                                className="cursor-pointer"
+                              >
+                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
+                                <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickMargin={10} />
+                                <YAxis 
+                                  yAxisId="left" 
+                                  stroke="#8b5cf6" 
+                                  fontSize={12} 
+                                  domain={[
+                                    (dataMin: number) => {
+                                      const minVal = isNaN(dataMin) ? 14 : Number(dataMin);
+                                      const goalVal = (showGoalReferenceLine && targetBmi) ? targetBmi : minVal;
+                                      return Math.max(12, Math.floor(Math.min(minVal, goalVal, 14)));
+                                    },
+                                    (dataMax: number) => {
+                                      const maxVal = isNaN(dataMax) ? 35 : Number(dataMax);
+                                      const goalVal = (showGoalReferenceLine && targetBmi) ? targetBmi : maxVal;
+                                      return Math.ceil(Math.max(maxVal, goalVal, 35) + 2);
+                                    }
+                                  ]}
+                                  unit=" kg/m²"
+                                />
+                                <YAxis 
+                                  yAxisId="right" 
+                                  orientation="right" 
+                                  stroke="#06b6d4" 
+                                  fontSize={12} 
+                                  domain={[
+                                    (dataMin: number) => {
+                                      const minVal = isNaN(dataMin) ? 60 : Number(dataMin);
+                                      const goalVal = (showGoalReferenceLine && weightGoal?.targetWeight) ? weightGoal.targetWeight : minVal;
+                                      return Math.max(30, Math.floor(Math.min(minVal, goalVal) - 5));
+                                    },
+                                    (dataMax: number) => {
+                                      const maxVal = isNaN(dataMax) ? 90 : Number(dataMax);
+                                      const goalVal = (showGoalReferenceLine && weightGoal?.targetWeight) ? weightGoal.targetWeight : maxVal;
+                                      return Math.ceil(Math.max(maxVal, goalVal) + 5);
+                                    }
+                                  ]}
+                                  unit=" kg"
+                                />
+                                <Tooltip
+                                  content={<CustomBmiTooltip onSelectVisit={handleNavigateToHistoryVisit} weightGoal={weightGoal} />}
+                                  wrapperStyle={{ pointerEvents: 'auto', outline: 'none' }}
+                                />
+                                <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+
+                                {/* Strefy tła dla kategorii BMI (ReferenceArea) powiązane z lewą osią BMI */}
+                                <ReferenceArea 
+                                  yAxisId="left"
+                                  y1={14} 
+                                  y2={18.5} 
+                                  fill="#3b82f6" 
+                                  fillOpacity={0.08} 
+                                  stroke="#3b82f6" 
+                                  strokeOpacity={0.2} 
+                                  strokeDasharray="2 2"
+                                />
+                                <ReferenceArea 
+                                  yAxisId="left"
+                                  y1={18.5} 
+                                  y2={25} 
+                                  fill="#10b981" 
+                                  fillOpacity={0.08} 
+                                  stroke="#10b981" 
+                                  strokeOpacity={0.2} 
+                                  strokeDasharray="2 2"
+                                />
+                                <ReferenceArea 
+                                  yAxisId="left"
+                                  y1={25} 
+                                  y2={30} 
+                                  fill="#f59e0b" 
+                                  fillOpacity={0.08} 
+                                  stroke="#f59e0b" 
+                                  strokeOpacity={0.2} 
+                                  strokeDasharray="2 2"
+                                />
+                                <ReferenceArea 
+                                  yAxisId="left"
+                                  y1={30} 
+                                  y2={45} 
+                                  fill="#ef4444" 
+                                  fillOpacity={0.08} 
+                                  stroke="#ef4444" 
+                                  strokeOpacity={0.2} 
+                                  strokeDasharray="2 2"
+                                />
+
+                                {/* Linie referencyjne progów BMI powiązane z lewą osią BMI */}
+                                <ReferenceLine 
+                                  yAxisId="left"
+                                  y={18.5} 
+                                  stroke="#3b82f6" 
+                                  strokeWidth={1} 
+                                  strokeDasharray="3 3" 
+                                  label={{ 
+                                    value: '18.5 (Niedowaga)', 
+                                    fill: '#2563eb', 
+                                    fontSize: 10, 
+                                    fontWeight: 600,
+                                    position: 'insideTopRight' 
+                                  }} 
+                                />
+                                <ReferenceLine 
+                                  yAxisId="left"
+                                  y={25} 
+                                  stroke="#10b981" 
+                                  strokeWidth={1} 
+                                  strokeDasharray="3 3" 
+                                  label={{ 
+                                    value: '25.0 (Nadwaga)', 
+                                    fill: '#059669', 
+                                    fontSize: 10, 
+                                    fontWeight: 600,
+                                    position: 'insideTopRight' 
+                                  }} 
+                                />
+                                <ReferenceLine 
+                                  yAxisId="left"
+                                  y={30} 
+                                  stroke="#ef4444" 
+                                  strokeWidth={1} 
+                                  strokeDasharray="3 3" 
+                                  label={{ 
+                                    value: '30.0 (Otyłość)', 
+                                    fill: '#dc2626', 
+                                    fontSize: 10, 
+                                    fontWeight: 600,
+                                    position: 'insideTopRight' 
+                                  }} 
+                                />
+
+                                {/* Dynamiczna Linia Celu Wagi (Oś Prawa - Waga kg) */}
+                                {showGoalReferenceLine && weightGoal && (
+                                  <ReferenceLine 
+                                    yAxisId="right"
+                                    y={weightGoal.targetWeight} 
+                                    stroke="#9333ea" 
+                                    strokeWidth={2.5} 
+                                    strokeDasharray="5 4" 
+                                    label={{ 
+                                      value: `🎯 Cel wagi: ${weightGoal.targetWeight} kg`, 
+                                      fill: '#9333ea', 
+                                      fontSize: 11, 
+                                      fontWeight: 700,
+                                      position: 'insideTopRight' 
+                                    }} 
+                                  />
+                                )}
+
+                                {/* Dynamiczna Linia Celu BMI (Oś Lewa - BMI kg/m²) */}
+                                {showGoalReferenceLine && targetBmi && (
+                                  <ReferenceLine 
+                                    yAxisId="left"
+                                    y={targetBmi} 
+                                    stroke="#7c3aed" 
+                                    strokeWidth={2} 
+                                    strokeDasharray="4 4" 
+                                    strokeOpacity={0.8}
+                                    label={{ 
+                                      value: `🎯 Cel BMI: ${targetBmi}`, 
+                                      fill: '#7c3aed', 
+                                      fontSize: 10, 
+                                      fontWeight: 700,
+                                      position: 'insideTopLeft' 
+                                    }} 
+                                  />
+                                )}
+
+                                <Line 
+                                  yAxisId="left" 
+                                  type="monotone" 
+                                  dataKey="bmi" 
+                                  name="BMI (kg/m²)" 
+                                  stroke="#8b5cf6" 
+                                  strokeWidth={3} 
+                                  dot={{ r: 5, fill: '#8b5cf6', stroke: '#ffffff', strokeWidth: 1.5, cursor: 'pointer' }} 
+                                  activeDot={{ 
+                                    r: 7, 
+                                    fill: '#8b5cf6', 
+                                    stroke: '#ffffff', 
+                                    strokeWidth: 2, 
+                                    cursor: 'pointer',
+                                    onClick: (_e: any, payload: any) => {
+                                      const recordId = payload?.payload?.recordId;
+                                      if (recordId) {
+                                        handleNavigateToHistoryVisit(recordId);
+                                      }
+                                    }
+                                  }} 
+                                  connectNulls 
+                                />
+                                <Line 
+                                  yAxisId="right" 
+                                  type="monotone" 
+                                  dataKey="weight" 
+                                  name="Waga (kg)" 
+                                  stroke="#06b6d4" 
+                                  strokeWidth={2.5} 
+                                  dot={{ r: 5, fill: '#06b6d4', stroke: '#ffffff', strokeWidth: 1.5, cursor: 'pointer' }} 
+                                  activeDot={{ 
+                                    r: 7, 
+                                    fill: '#06b6d4', 
+                                    stroke: '#ffffff', 
+                                    strokeWidth: 2, 
+                                    cursor: 'pointer',
+                                    onClick: (_e: any, payload: any) => {
+                                      const recordId = payload?.payload?.recordId;
+                                      if (recordId) {
+                                        handleNavigateToHistoryVisit(recordId);
+                                      }
+                                    }
+                                  }} 
+                                  connectNulls 
+                                />
+                              </LineChart>
+                            </ResponsiveContainer>
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mt-2 px-1 gap-1">
+                              <span className="flex items-center gap-1">
+                                💡 Kliknij dowolny punkt na wykresie lub przycisk w chmurce (tooltip), aby przejść do wybranej wizyty w historii.
+                              </span>
+                              {selectedHistoryId && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedHistoryId(null)}
+                                  className="text-emerald-600 dark:text-emerald-400 hover:underline font-semibold"
+                                >
+                                  Wyczyść zaznaczenie wizyty
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-500 dark:text-slate-400 italic">Brak zarejestrowanych pomiarów wagi i wzrostu pacjenta.</p>
+                        )}
                       </div>
                     </section>
                   )}
@@ -459,12 +973,55 @@ export default function App() {
                         <AlertCircle className="text-emerald-600" size={20} />
                         <h2 className="text-lg font-bold dark:text-slate-100">Wynik Analizy i Alerty</h2>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 items-center flex-wrap">
+                        <button 
+                          onClick={() => {
+                            exportAndDownloadSingleVisit({
+                              patientId,
+                              patientInfo,
+                              vitals,
+                              symptoms,
+                              medications,
+                              analysis
+                            });
+                            NotificationService.addNotification('SUCCESS', 'Eksport CSV', `Pomyślnie wyeksportowano dane wizyty pacjenta ${patientId} do formatu CSV`);
+                          }}
+                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors shadow-sm"
+                          title="Eksportuj dane wizyty do pliku CSV (zgodnego z Excel i systemami zewnętrznymi EHR)"
+                        >
+                          <FileSpreadsheet size={13} />
+                          Eksportuj CSV
+                        </button>
                         <button 
                           onClick={() => generatePatientReportPDF(analysis, patientId)}
-                          className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-bold uppercase tracking-wider"
+                          className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-colors"
+                          title="Generuj raport PDF dla bieżącej wizyty"
                         >
+                          <FileText size={13} />
                           Generuj PDF
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const recordsToExport = patientHistory && patientHistory.length > 0
+                              ? patientHistory
+                              : [{
+                                  id: 'current',
+                                  patientId,
+                                  timestamp: new Date().toISOString(),
+                                  symptoms,
+                                  medications,
+                                  vitals,
+                                  analysis,
+                                  patientInfo
+                                }];
+                            generatePatientReportPDF(analysis, patientId, recordsToExport);
+                            NotificationService.addNotification('SUCCESS', 'Zbiorczy Raport PDF', `Wygenerowano zbiorczy raport PDF dla ${recordsToExport.length} wizyt pacjenta ${patientId}`);
+                          }}
+                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-colors"
+                          title="Generuj zbiorczy raport PDF dla wszystkich zarejestrowanych historycznych wizyt pacjenta"
+                        >
+                          <FileText size={13} />
+                          Zbiorczy Raport PDF
                         </button>
                         <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${analysis.data.decision.isSafe ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                           {analysis.data.decision.isSafe ? 'Bezpieczne' : 'Wymaga Uwagi'}
@@ -566,13 +1123,29 @@ export default function App() {
 
                     {analysis.data.decision.alerts.length > 0 && (
                       <div className="space-y-2">
-                        <p className="text-xs font-bold text-slate-500 uppercase">Alerty Systemowe</p>
-                        {analysis.data.decision.alerts.map((alert: string, i: number) => (
-                          <div key={i} className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm text-amber-800 flex gap-3">
-                            <AlertCircle size={18} className="shrink-0" />
-                            {alert}
-                          </div>
-                        ))}
+                        <p className="text-xs font-bold text-slate-500 uppercase">Alerty Systemowe i Ostrzeżenia</p>
+                        {analysis.data.decision.alerts.map((alert: string, i: number) => {
+                          const isWarningOrCritical = alert.includes('ALERT') || alert.includes('utrata') || alert.includes('przyrost') || alert.includes('KRYTYCZNY') || alert.includes('BLOKADA');
+                          return (
+                            <div 
+                              key={i} 
+                              className={`rounded-xl px-4 py-3 text-sm flex gap-3 items-start border ${
+                                isWarningOrCritical 
+                                  ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900/60 text-red-900 dark:text-red-200' 
+                                  : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200'
+                              }`}
+                            >
+                              {isWarningOrCritical ? (
+                                <AlertTriangle size={18} className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                              ) : (
+                                <AlertCircle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                              )}
+                              <div className="leading-relaxed">
+                                {alert}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </section>
@@ -703,6 +1276,9 @@ export default function App() {
             history={patientHistory} 
             onSelect={handleSelectHistory} 
             onDelete={handleDeleteHistory} 
+            patientId={patientId}
+            selectedRecordId={selectedHistoryId}
+            onClearSelection={() => setSelectedHistoryId(null)}
           />
         ) : view === 'patient' ? (
           <PatientView 
@@ -711,6 +1287,10 @@ export default function App() {
             patientHistory={patientHistory}
             vitals={vitals}
             onUpdateVitals={setVitals}
+            onNavigateToHistory={handleNavigateToHistoryVisit}
+            patientId={patientId}
+            weightGoal={weightGoal}
+            onOpenWeightGoalModal={() => setIsWeightGoalModalOpen(true)}
           />
         ) : (
           <div className="h-[calc(100vh-160px)] bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -723,6 +1303,17 @@ export default function App() {
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
         onSettingsChange={(newSettings) => setSettings(newSettings)}
+      />
+
+      {/* Modal Zarządzania Celami Wagi Pacjenta */}
+      <WeightGoalModal
+        isOpen={isWeightGoalModalOpen}
+        onClose={() => setIsWeightGoalModalOpen(false)}
+        patientId={patientId}
+        currentWeight={patientInfo.weight}
+        heightCm={patientInfo.height}
+        existingGoal={weightGoal}
+        onGoalUpdated={(updatedGoal) => setWeightGoal(updatedGoal)}
       />
     </div>
   );

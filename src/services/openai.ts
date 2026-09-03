@@ -12,13 +12,17 @@ export async function* streamOpenAIChat(
     });
 
     if (!response.ok) {
-      let errorData;
+      let errorData: any = {};
       try {
         errorData = await response.json();
       } catch {
         errorData = { error: "Unknown error from server" };
       }
-      throw new Error(errorData.error || `OpenAI request failed with status ${response.status}`);
+      const err: any = new Error(errorData.error || errorData.details || `OpenAI request failed with status ${response.status}`);
+      err.status = response.status;
+      err.details = errorData.details;
+      err.code = errorData.code;
+      throw err;
     }
 
     const reader = response.body?.getReader();

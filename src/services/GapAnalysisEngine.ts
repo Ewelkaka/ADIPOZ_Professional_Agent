@@ -22,7 +22,7 @@ export class GapAnalysisEngine {
   }
 
   async analyze(symptoms: string, medications: string, vitals: any, patientInfo: any): Promise<GapAnalysis> {
-    const model = "gemini-3-flash-preview";
+    const model = "gemini-2.5-flash";
     
     const prompt = `Analiza brakujących danych medycznych (Omissions & Missing Data Analysis):
     Objawy: ${symptoms}

@@ -21,7 +21,7 @@ export class MedicationAnalysisEngine {
   }
 
   async analyze(medications: string, symptoms: string, vitals: any): Promise<MedicationAnalysis> {
-    const model = "gemini-3-flash-preview";
+    const model = "gemini-2.5-flash";
     
     const prompt = `Analiza bezpieczeństwa farmakoterapii:
     Leki pacjenta: ${medications}

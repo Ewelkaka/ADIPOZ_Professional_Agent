@@ -1,7 +1,14 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { User, Activity, FileText, Send, Heart, Camera, RefreshCw, AlertCircle, Check, Loader2, Play, CircleDot } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { User, Activity, FileText, Send, Heart, Camera, RefreshCw, AlertCircle, Check, Loader2, Play, CircleDot, FileSpreadsheet, Target } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { AnalysisRecord } from '../services/LocalPatientDB';
+import { exportAndDownloadSingleVisit } from '../lib/csvExporter';
+import { NotificationService } from '../services/NotificationService';
+import { CustomBmiTooltip, BmiChartPointData } from './CustomBmiTooltip';
+import { WeightGoalService, WeightGoal } from '../services/WeightGoalService';
+import { WeightGoalCard } from './WeightGoalCard';
+import { BmiVarianceService } from '../services/BmiVarianceService';
+import { BmiVarianceCard } from './BmiVarianceCard';
 
 // Mock data generator
 const generateMockEkgData = (period: '24h' | '7d') => {
@@ -23,28 +30,68 @@ interface PatientViewProps {
   patientHistory: AnalysisRecord[];
   vitals?: { temp: number; bp: string; pulse?: number; allergies: any[] };
   onUpdateVitals?: (newVitals: any) => void;
+  onNavigateToHistory?: (recordId: string) => void;
+  patientId?: string;
+  weightGoal?: WeightGoal | null;
+  onOpenWeightGoalModal?: () => void;
 }
 
-export const PatientView: React.FC<PatientViewProps> = ({ patientInfo, analysis, patientHistory, vitals, onUpdateVitals }) => {
+export const PatientView: React.FC<PatientViewProps> = ({ 
+  patientInfo, 
+  analysis, 
+  patientHistory, 
+  vitals, 
+  onUpdateVitals, 
+  onNavigateToHistory,
+  patientId,
+  weightGoal,
+  onOpenWeightGoalModal
+}) => {
   const lastVisit = patientHistory.length > 0 ? patientHistory[0] : null;
   const [ekgPeriod, setEkgPeriod] = useState<'24h' | '7d'>('24h');
+  const [showGoalLine, setShowGoalLine] = useState(true);
+  const [bmiVarianceThreshold, setBmiVarianceThreshold] = useState<number>(2.0);
   const ekgData = useMemo(() => generateMockEkgData(ekgPeriod), [ekgPeriod]);
 
-  const weightBmiChartData = useMemo(() => {
-    const data = patientHistory
-      .filter(record => record.patientInfo && record.patientInfo.weight)
-      .map(record => ({
-        date: new Date(record.timestamp).toLocaleDateString(),
-        weight: record.patientInfo.weight,
-        bmi: record.patientInfo.bmi
-      }))
+  const bmiVarianceAnalysis = useMemo(() => {
+    return BmiVarianceService.evaluatePatientHistory(patientHistory, patientInfo, bmiVarianceThreshold);
+  }, [patientHistory, patientInfo.weight, patientInfo.height, patientInfo.bmi, bmiVarianceThreshold]);
+
+  const targetBmi = useMemo(() => {
+    if (!weightGoal?.targetWeight || !patientInfo?.height) return null;
+    return WeightGoalService.calculateBmi(weightGoal.targetWeight, patientInfo.height);
+  }, [weightGoal?.targetWeight, patientInfo?.height]);
+
+  const weightBmiChartData: BmiChartPointData[] = useMemo(() => {
+    const data: BmiChartPointData[] = patientHistory
+      .filter(record => record.patientInfo && (record.patientInfo.weight || record.patientInfo.bmi))
+      .map(record => {
+        const bmiVal = record.patientInfo?.bmi || (record.patientInfo?.weight && record.patientInfo?.height ? parseFloat((record.patientInfo.weight / Math.pow(record.patientInfo.height / 100, 2)).toFixed(1)) : 0);
+        return {
+          recordId: record.id,
+          timestamp: record.timestamp,
+          date: new Date(record.timestamp).toLocaleDateString('pl-PL'),
+          time: new Date(record.timestamp).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
+          weight: record.patientInfo?.weight ? Number(record.patientInfo.weight) : undefined,
+          bmi: Number(bmiVal),
+          diagnosis: record.analysis?.decision?.diagnosis || 'Wizyta lekarska',
+          icd10Code: record.analysis?.decision?.icd10Code,
+          symptoms: record.symptoms,
+          medications: record.medications
+        };
+      })
       .reverse();
 
     if (data.length === 0 && patientInfo) {
       data.push({
-        date: new Date().toLocaleDateString(),
-        weight: patientInfo.weight,
-        bmi: patientInfo.bmi
+        recordId: undefined,
+        timestamp: Date.now(),
+        date: new Date().toLocaleDateString('pl-PL'),
+        time: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
+        weight: patientInfo.weight ? Number(patientInfo.weight) : undefined,
+        bmi: Number(patientInfo.bmi || 0),
+        diagnosis: 'Bieżący profil',
+        icd10Code: undefined
       });
     }
 
@@ -326,9 +373,33 @@ export const PatientView: React.FC<PatientViewProps> = ({ patientInfo, analysis,
 
         {/* Podsumowanie ostatniej wizyty */}
         <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
-          <div className="flex items-center gap-2 mb-6">
-            <Activity className="text-emerald-600" size={24} />
-            <h2 className="text-xl font-bold dark:text-slate-100">Ostatnia Wizyta</h2>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2">
+              <Activity className="text-emerald-600" size={24} />
+              <h2 className="text-xl font-bold dark:text-slate-100">Ostatnia Wizyta</h2>
+            </div>
+            {lastVisit && (
+              <button
+                type="button"
+                onClick={() => {
+                  exportAndDownloadSingleVisit({
+                    patientId: lastVisit.patientId,
+                    timestamp: lastVisit.timestamp,
+                    patientInfo: lastVisit.patientInfo || patientInfo,
+                    vitals: lastVisit.vitals || vitals,
+                    symptoms: lastVisit.symptoms,
+                    medications: lastVisit.medications,
+                    analysis: lastVisit.analysis
+                  });
+                  NotificationService.addNotification('SUCCESS', 'Eksport CSV', `Pomyślnie wyeksportowano ostatnią wizytę pacjenta do pliku CSV`);
+                }}
+                className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 transition-colors"
+                title="Eksportuj tę wizytę do pliku CSV"
+              >
+                <FileSpreadsheet size={14} />
+                Eksportuj CSV
+              </button>
+            )}
           </div>
           {lastVisit ? (
             <div className="space-y-4">
@@ -353,28 +424,180 @@ export const PatientView: React.FC<PatientViewProps> = ({ patientInfo, analysis,
 
       {/* Historia Wagi i BMI */}
       <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Activity className="text-blue-600" size={24} />
             <h2 className="text-xl font-bold dark:text-slate-100">Historia Wagi i BMI</h2>
           </div>
         </div>
+
+        {/* Moduł Wariancji BMI i Alertów Dynamiki */}
+        <BmiVarianceCard
+          varianceAnalysis={bmiVarianceAnalysis}
+          onNavigateToVisit={onNavigateToHistory}
+          threshold={bmiVarianceThreshold}
+          onThresholdChange={setBmiVarianceThreshold}
+        />
+
+        {/* Moduł Celu Wagi Pacjenta w Widoku Pacjenta */}
+        <WeightGoalCard
+          goal={weightGoal || null}
+          currentWeight={patientInfo.weight || 0}
+          heightCm={patientInfo.height || 0}
+          onOpenModal={() => {
+            if (onOpenWeightGoalModal) {
+              onOpenWeightGoalModal();
+            }
+          }}
+          showReferenceLine={showGoalLine}
+          onToggleReferenceLine={() => setShowGoalLine(prev => !prev)}
+        />
+
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={weightBmiChartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+            <LineChart 
+              data={weightBmiChartData} 
+              margin={{ top: 5, right: 20, bottom: 5, left: 0 }}
+              onClick={(e: any) => {
+                if (e && e.activePayload && e.activePayload.length) {
+                  const pointData = e.activePayload[0].payload;
+                  if (pointData?.recordId && onNavigateToHistory) {
+                    onNavigateToHistory(pointData.recordId);
+                  }
+                }
+              }}
+              className="cursor-pointer"
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
               <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickMargin={10} />
-              <YAxis yAxisId="left" stroke="#3b82f6" fontSize={12} label={{ value: 'Waga (kg)', angle: -90, position: 'insideLeft', style: { fill: '#3b82f6' } }} />
-              <YAxis yAxisId="right" orientation="right" stroke="#10b981" fontSize={12} label={{ value: 'BMI', angle: 90, position: 'insideRight', style: { fill: '#10b981' } }} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc' }}
-                itemStyle={{ color: '#e2e8f0' }}
+              <YAxis 
+                yAxisId="left" 
+                stroke="#3b82f6" 
+                fontSize={12} 
+                domain={[
+                  (dataMin: number) => {
+                    const minVal = isNaN(dataMin) ? 50 : Number(dataMin);
+                    const goalVal = (showGoalLine && weightGoal?.targetWeight) ? weightGoal.targetWeight : minVal;
+                    return Math.max(30, Math.floor(Math.min(minVal, goalVal) - 5));
+                  },
+                  (dataMax: number) => {
+                    const maxVal = isNaN(dataMax) ? 90 : Number(dataMax);
+                    const goalVal = (showGoalLine && weightGoal?.targetWeight) ? weightGoal.targetWeight : maxVal;
+                    return Math.ceil(Math.max(maxVal, goalVal) + 5);
+                  }
+                ]}
+                label={{ value: 'Waga (kg)', angle: -90, position: 'insideLeft', style: { fill: '#3b82f6' } }} 
               />
-              <Line yAxisId="left" type="monotone" dataKey="weight" name="Waga (kg)" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2 }} activeDot={{ r: 6 }} />
-              <Line yAxisId="right" type="monotone" dataKey="bmi" name="BMI" stroke="#10b981" strokeWidth={3} dot={{ r: 4, fill: '#10b981', strokeWidth: 2 }} activeDot={{ r: 6 }} />
+              <YAxis 
+                yAxisId="right" 
+                orientation="right" 
+                stroke="#10b981" 
+                fontSize={12} 
+                domain={[
+                  (dataMin: number) => {
+                    const minVal = isNaN(dataMin) ? 16 : Number(dataMin);
+                    const goalVal = (showGoalLine && targetBmi) ? targetBmi : minVal;
+                    return Math.max(12, Math.floor(Math.min(minVal, goalVal, 16)));
+                  },
+                  (dataMax: number) => {
+                    const maxVal = isNaN(dataMax) ? 35 : Number(dataMax);
+                    const goalVal = (showGoalLine && targetBmi) ? targetBmi : maxVal;
+                    return Math.ceil(Math.max(maxVal, goalVal, 35) + 2);
+                  }
+                ]}
+                label={{ value: 'BMI', angle: 90, position: 'insideRight', style: { fill: '#10b981' } }} 
+              />
+              <Tooltip
+                content={<CustomBmiTooltip onSelectVisit={onNavigateToHistory} weightGoal={weightGoal} />}
+                wrapperStyle={{ pointerEvents: 'auto', outline: 'none' }}
+              />
+
+              {/* Linia odniesienia dla celu wagi (Oś Lewa - Waga kg) */}
+              {showGoalLine && weightGoal && (
+                <ReferenceLine 
+                  yAxisId="left"
+                  y={weightGoal.targetWeight} 
+                  stroke="#9333ea" 
+                  strokeWidth={2.5} 
+                  strokeDasharray="5 4" 
+                  label={{ 
+                    value: `🎯 Cel wagi: ${weightGoal.targetWeight} kg`, 
+                    fill: '#9333ea', 
+                    fontSize: 11, 
+                    fontWeight: 700,
+                    position: 'insideTopLeft' 
+                  }} 
+                />
+              )}
+
+              {/* Linia odniesienia dla celu BMI (Oś Prawa - BMI) */}
+              {showGoalLine && targetBmi && (
+                <ReferenceLine 
+                  yAxisId="right"
+                  y={targetBmi} 
+                  stroke="#7c3aed" 
+                  strokeWidth={2} 
+                  strokeDasharray="4 4" 
+                  strokeOpacity={0.8}
+                  label={{ 
+                    value: `🎯 Cel BMI: ${targetBmi}`, 
+                    fill: '#7c3aed', 
+                    fontSize: 10, 
+                    fontWeight: 700,
+                    position: 'insideTopRight' 
+                  }} 
+                />
+              )}
+              <Line 
+                yAxisId="left" 
+                type="monotone" 
+                dataKey="weight" 
+                name="Waga (kg)" 
+                stroke="#3b82f6" 
+                strokeWidth={3} 
+                dot={{ r: 5, fill: '#3b82f6', stroke: '#ffffff', strokeWidth: 1.5, cursor: 'pointer' }} 
+                activeDot={{ 
+                  r: 7, 
+                  fill: '#3b82f6', 
+                  stroke: '#ffffff', 
+                  strokeWidth: 2, 
+                  cursor: 'pointer',
+                  onClick: (_e: any, payload: any) => {
+                    const recordId = payload?.payload?.recordId;
+                    if (recordId && onNavigateToHistory) {
+                      onNavigateToHistory(recordId);
+                    }
+                  }
+                }} 
+              />
+              <Line 
+                yAxisId="right" 
+                type="monotone" 
+                dataKey="bmi" 
+                name="BMI" 
+                stroke="#10b981" 
+                strokeWidth={3} 
+                dot={{ r: 5, fill: '#10b981', stroke: '#ffffff', strokeWidth: 1.5, cursor: 'pointer' }} 
+                activeDot={{ 
+                  r: 7, 
+                  fill: '#10b981', 
+                  stroke: '#ffffff', 
+                  strokeWidth: 2, 
+                  cursor: 'pointer',
+                  onClick: (_e: any, payload: any) => {
+                    const recordId = payload?.payload?.recordId;
+                    if (recordId && onNavigateToHistory) {
+                      onNavigateToHistory(recordId);
+                    }
+                  }
+                }} 
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 px-1">
+          💡 Kliknij dowolny punkt lub chmurkę (tooltip), aby przejść do wybranej wizyty w zakładce Historia.
+        </p>
       </section>
 
       {/* Wizualizacja EKG */}
