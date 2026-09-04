@@ -26,6 +26,11 @@ export const CustomBmiChartDot: React.FC<CustomBmiChartDotProps> = ({
 }) => {
   if (cx === undefined || cy === undefined || isNaN(cx) || isNaN(cy) || !payload) return null;
 
+  // Punkty ekstrapolacji / prognozy nie rysują pełnej kropki na linii historycznej
+  if (payload.isProjected) {
+    return null;
+  }
+
   const hasNewMed = Boolean(payload.hasNewMedication && payload.newMedications && payload.newMedications.length > 0);
   const firstNewMed = hasNewMed ? payload.newMedications![0] : '';
   // Skrócona nazwa pierwszego leku do etykiety
@@ -152,6 +157,7 @@ export const CustomBmiXAxisTick: React.FC<CustomBmiXAxisTickProps> = ({
 
   const pointData = data.find(d => d.date === payload.value) || (payload.index !== undefined ? data[payload.index] : undefined);
   const hasNewMed = Boolean(pointData?.hasNewMedication);
+  const isProjected = Boolean(pointData?.isProjected);
 
   const handleClick = (e: React.MouseEvent) => {
     if (pointData?.recordId && onSelectVisit) {
@@ -163,7 +169,7 @@ export const CustomBmiXAxisTick: React.FC<CustomBmiXAxisTickProps> = ({
   return (
     <g 
       transform={`translate(${x},${y})`} 
-      className={hasNewMed ? 'cursor-pointer group' : ''}
+      className={hasNewMed ? 'cursor-pointer group' : isProjected ? 'cursor-default' : ''}
       onClick={hasNewMed ? handleClick : undefined}
     >
       {/* Etykieta daty */}
@@ -172,12 +178,12 @@ export const CustomBmiXAxisTick: React.FC<CustomBmiXAxisTickProps> = ({
         y={0}
         dy={12}
         textAnchor="middle"
-        fill={hasNewMed ? '#db2777' : '#64748b'}
+        fill={hasNewMed ? '#db2777' : isProjected ? '#a855f7' : '#64748b'}
         fontSize={11}
-        fontWeight={hasNewMed ? 700 : 500}
+        fontWeight={hasNewMed || isProjected ? 700 : 500}
         className="select-none"
       >
-        {payload.value}
+        {isProjected ? `🔮 ${payload.value}` : payload.value}
       </text>
 
       {/* Znacznik zdarzenia farmakoterapii na osi X */}

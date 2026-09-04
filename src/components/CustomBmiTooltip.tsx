@@ -22,6 +22,10 @@ export interface BmiChartPointData {
   weightDeltaAfterMed?: number;
   bmiDeltaAfterMed?: number;
   daysObservedAfterMed?: number;
+  weightTrend?: number;
+  bmiTrend?: number;
+  isProjected?: boolean;
+  projectedLabel?: string;
 }
 
 interface CustomBmiTooltipProps {
@@ -74,6 +78,52 @@ export const CustomBmiTooltip: React.FC<CustomBmiTooltipProps> = ({
     }
   };
 
+  // Widok dla prognozowanych punktów ekstrapolacji regresji liniowej w przyszłość
+  if (data.isProjected) {
+    return (
+      <div className="bg-slate-900/95 backdrop-blur-md border border-purple-600/70 rounded-xl p-3.5 shadow-2xl text-slate-100 text-xs min-w-[270px] max-w-xs space-y-2.5 pointer-events-auto select-none">
+        <div className="flex items-center justify-between pb-2 border-b border-purple-800/60">
+          <div className="flex items-center gap-1.5 font-bold text-purple-300">
+            <span>🔮</span>
+            <span>Prognoza Liniowa • {data.date}</span>
+          </div>
+          <span className="px-2 py-0.5 rounded text-[10px] font-bold border border-purple-500/50 bg-purple-950/80 text-purple-200">
+            Ekstrapolacja
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 bg-purple-950/40 rounded-lg p-2.5 border border-purple-800/60">
+          <div>
+            <span className="text-[10px] uppercase font-bold text-purple-300 block tracking-wider">Trend BMI</span>
+            <span className="text-sm font-bold text-purple-200 font-mono flex items-baseline gap-1">
+              {data.bmiTrend || data.bmi}
+              <span className="text-[10px] font-normal text-purple-400 font-sans">kg/m²</span>
+            </span>
+          </div>
+          {data.weightTrend !== undefined && (
+            <div>
+              <span className="text-[10px] uppercase font-bold text-amber-300 block tracking-wider">Waga (Trend OLS)</span>
+              <span className="text-sm font-bold text-amber-300 font-mono flex items-baseline gap-1">
+                {data.weightTrend}
+                <span className="text-[10px] font-normal text-amber-400 font-sans">kg</span>
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="p-2 rounded-lg bg-slate-800/80 border border-slate-700 text-[11px] space-y-1">
+          <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+            <Target size={13} className="text-purple-400" />
+            <span>{data.projectedLabel || 'Przewidywany punkt w czasie'}</span>
+          </div>
+          <p className="text-[10px] text-slate-400">
+            Wartość ekstrapolowana na podstawie dotychczasowego historycznego tempa zmian masy ciała pacjenta.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-xl p-3.5 shadow-2xl text-slate-100 text-xs min-w-[270px] max-w-xs space-y-2.5 pointer-events-auto select-none"
@@ -111,6 +161,19 @@ export const CustomBmiTooltip: React.FC<CustomBmiTooltipProps> = ({
           </div>
         )}
       </div>
+
+      {/* Wartość linii trendu regresji liniowej */}
+      {data.weightTrend !== undefined && (
+        <div className="flex items-center justify-between text-[10px] px-2 py-1 rounded bg-slate-800/50 border border-slate-700/50 text-slate-400">
+          <span className="flex items-center gap-1 text-amber-400">
+            <span>📈</span>
+            <span>Trend regresji:</span>
+          </span>
+          <span className="font-mono text-slate-300 font-semibold">
+            {data.weightTrend} kg {data.bmiTrend ? `(${data.bmiTrend} BMI)` : ''}
+          </span>
+        </div>
+      )}
 
       {/* Relacja z celem wagi pacjenta */}
       {weightGoal && data.weight !== undefined && !isNaN(Number(data.weight)) && !isNaN(Number(weightGoal.targetWeight)) && (

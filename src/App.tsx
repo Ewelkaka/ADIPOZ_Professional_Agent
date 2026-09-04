@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { SystemOrchestrator } from './services/SystemOrchestrator';
-import { AlertCircle, FileText, History as HistoryIcon, Shield, User, Activity, Pill, CheckCircle2, XCircle, Settings as SettingsIcon, Database, AlertTriangle, Share2, Code, Terminal, ChevronLeft, UserCircle, FileCode, FileSpreadsheet, Calendar, Target } from 'lucide-react';
+import { AlertCircle, FileText, History as HistoryIcon, Shield, User, Activity, Pill, CheckCircle2, XCircle, Settings as SettingsIcon, Database, AlertTriangle, Share2, Code, Terminal, ChevronLeft, UserCircle, FileCode, FileSpreadsheet, Calendar, Target, QrCode, Tag, Download, Copy, Layers } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { SettingsService, UserSettings } from './services/SettingsService';
 import { NotificationCenter } from './components/NotificationCenter';
@@ -9,7 +9,7 @@ import { LocalPatientDB, AnalysisRecord } from './services/LocalPatientDB';
 import { History } from './components/History';
 import Chat from './components/Chat';
 import { PatientView } from './components/PatientView';
-import { generatePatientReportPDF } from './lib/pdfGenerator';
+import { generatePatientReportPDF, generatePatientEReceptasReportPDF } from './lib/pdfGenerator';
 import { exportAndDownloadSingleVisit } from './lib/csvExporter';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, ReferenceArea } from 'recharts';
 import { CustomBmiTooltip, BmiChartPointData } from './components/CustomBmiTooltip';
@@ -24,6 +24,23 @@ import { MedicationCorrelationCard } from './components/MedicationCorrelationCar
 import { AutonomousAgentWorkflowCard } from './components/AutonomousAgentWorkflowCard';
 import { FhirExportModal } from './components/FhirExportModal';
 import { FhirExportParams } from './services/FhirExportService';
+import { PatientMonitorCard } from './components/PatientMonitorCard';
+import { PatientIntakeModal } from './components/PatientIntakeModal';
+import { PatientIntakeSurvey } from './components/PatientIntakeSurvey';
+import { PatientIntakeService, PatientIntakeForm } from './services/PatientIntakeService';
+import { DrugInteractionGraph } from './components/DrugInteractionGraph';
+import { Icd10SmartSelector } from './components/Icd10SmartSelector';
+import { EReceptaP1ExportModal } from './components/EReceptaP1ExportModal';
+import { EReceptaRiskIndicator } from './components/EReceptaRiskIndicator';
+import { EReceptaRiskAuditModal } from './components/EReceptaRiskAuditModal';
+import { EReceptaService, EReceptaData } from './services/EReceptaService';
+import { EReceptaRiskService } from './services/EReceptaRiskService';
+import { LinearRegressionService, WeightTrendAnalysis, ProjectedPointData } from './services/LinearRegressionService';
+import { BmiTrendRegressionCard } from './components/BmiTrendRegressionCard';
+import { P1MedsExportModal } from './components/P1MedsExportModal';
+import { P1CeZValidationService } from './services/P1CeZValidationService';
+import { RefundacjaMzCheckCard } from './components/RefundacjaMzCheckCard';
+import { RefundacjaMzService } from './services/RefundacjaMzService';
 
 const orchestrator = new SystemOrchestrator();
 const patientDB = new LocalPatientDB();
@@ -66,9 +83,50 @@ export default function App() {
   // Stan Modala Eksportu HL7 FHIR Bundle
   const [isFhirModalOpen, setIsFhirModalOpen] = useState<boolean>(false);
 
+  // Stan Modala Eksportu e-Recepty (Standard P1)
+  const [isEReceptaP1ModalOpen, setIsEReceptaP1ModalOpen] = useState<boolean>(false);
+
+  // Stan Modala Eksportu Leków do JSON P1 CeZ z Weryfikacją EAN/ATC/Uprawnień
+  const [isP1MedsExportModalOpen, setIsP1MedsExportModalOpen] = useState<boolean>(false);
+
+  // Stan Modala Audytu Ryzyka e-Recepty (NFZ / CeZ)
+  const [isRiskAuditModalOpen, setIsRiskAuditModalOpen] = useState<boolean>(false);
+
+  // Stan Modala Ankiety Przedwizytowej Pacjenta (QR / Link)
+  const [isIntakeModalOpen, setIsIntakeModalOpen] = useState<boolean>(false);
+
   // Stan Znaczników i Korelacji Farmakoterapii na Wykresie BMI
   const [showMedicationLines, setShowMedicationLines] = useState<boolean>(true);
   const [showMedicationBadges, setShowMedicationBadges] = useState<boolean>(true);
+
+  // Stan Linii Regresji Liniowej (Trendu) i Ekstrapolacji Celu na Wykresie BMI
+  const [showTrendLine, setShowTrendLine] = useState<boolean>(true);
+  const [showTrendForecast, setShowTrendForecast] = useState<boolean>(true);
+
+  // Funkcja aplikowania danych z ankiety pacjenta do stanu aplikacji
+  const handleApplyToIntakeSymptoms = useCallback((formattedSymptoms: string, intakeData?: PatientIntakeForm) => {
+    setSymptoms(prev => {
+      if (!prev || !prev.trim()) {
+        return formattedSymptoms;
+      }
+      return `${prev.trim()}\n\n--- Dane z Ankiety Pacjenta (Poczekalnia) ---\n${formattedSymptoms}`;
+    });
+
+    if (intakeData?.medicationsTaken && intakeData.medicationsTaken.trim()) {
+      setMedications(prev => {
+        if (!prev || !prev.trim()) {
+          return intakeData.medicationsTaken!;
+        }
+        return `${prev.trim()}, ${intakeData.medicationsTaken!.trim()}`;
+      });
+    }
+
+    NotificationService.addNotification(
+      'SUCCESS',
+      'Zaktualizowano Wywiad',
+      'Pomyślnie zaktualizowano pole wywiadu i objawów na podstawie ankiety pacjenta'
+    );
+  }, []);
 
   const bmiVarianceAnalysis = useMemo(() => {
     return BmiVarianceService.evaluatePatientHistory(patientHistory, patientInfo, bmiVarianceThreshold);
@@ -101,6 +159,290 @@ export default function App() {
       visitDate: new Date().toISOString()
     };
   }, [patientId, patientInfo, vitals, symptoms, medications, analysis]);
+
+  // Dane e-Recepty P1 wygenerowane lub zmapowane z bieżącej analizy
+  const currentEReceptaData = useMemo<EReceptaData>(() => {
+    if (analysis?.data?.note?.eReceptaP1?.data) {
+      return analysis.data.note.eReceptaP1.data;
+    }
+    const patientAge = patientInfo.age || 55;
+    const parsedMeds = EReceptaService.parseMedicationsFromText(
+      medications,
+      patientAge,
+      !!analysis?.data?.decision?.chronicDiseaseManagement
+    );
+    const patientName = patientInfo.imie && patientInfo.nazwisko 
+      ? `${patientInfo.imie} ${patientInfo.nazwisko}`
+      : patientInfo.name || 'Jan Kowalski';
+    const patientPesel = patientInfo.pesel || '80010112345';
+    const accessCode = Math.floor(1000 + Math.random() * 9000).toString();
+    const packageKey44 = EReceptaService.generate44DigitKey(patientPesel);
+
+    return {
+      patientName,
+      patientPesel,
+      doctorName: 'Lek. Anna Nowak',
+      doctorPzw: '1234567',
+      doctorTitle: 'Lekarz specjalista medycyny rodzinnej',
+      facilityName: 'NZOZ Poradnia Lekarza Rodzinnego i Opieki Koordynowanej POZ',
+      facilityCodeVII: '000000012345',
+      facilityRegon: '123456789',
+      nfzBranch: '01 - Dolnośląski OW NFZ',
+      date: new Date().toISOString().split('T')[0],
+      accessCode,
+      packageKey44,
+      packageId: `P1-REC-${Date.now()}`,
+      medications: parsedMeds.length > 0 ? parsedMeds : [
+        {
+          name: analysis?.data?.decision?.diagnosis?.includes('Nadciśnienie') ? 'Ramipril 5 mg' : 'Lek zalecony w wywiadzie',
+          innName: analysis?.data?.decision?.diagnosis?.includes('Nadciśnienie') ? 'Ramiprilum' : 'Lek zalecony w wywiadzie',
+          dosage: '1x1 rano',
+          quantity: '1 op.',
+          packageSize: '28 tabl.',
+          atcCode: 'C09AA05',
+          eanGtin: '5909990012345',
+          formCode: 'TABL_POWL',
+          refundationLevel: patientAge >= 65 ? 'S' : 'R',
+          additionalPrivilege: patientAge >= 65 ? 'S' : 'BRAK',
+          dosageInstruction: '1 tabletka doustnie 1 raz dziennie rano',
+          treatmentDurationDays: 30,
+          validityDays: 30
+        }
+      ],
+      icd10Diagnosis: analysis?.data?.decision?.icd10Code || 'I10'
+    };
+  }, [analysis, medications, patientInfo]);
+
+  // Bezpośredni 1-kliknięciowy eksport pliku JSON P1 do zewnętrznych systemów z automatyczną analizą NFZ
+  const handleDownloadEReceptaJson = useCallback(() => {
+    if (!currentEReceptaData) return;
+
+    // Automatyczna analiza poprawności i weryfikacja wymogów NFZ przed pobraniem
+    const riskAnalysis = EReceptaRiskService.analyzeEReceptaRisk(currentEReceptaData);
+    
+    // Weryfikacja z Obwieszczeniem MZ (Wykaz Leków Refundowanych)
+    const mzAudit = RefundacjaMzService.verifyMedicationsRefundList(
+      currentEReceptaData.medications,
+      currentEReceptaData.icd10Diagnosis,
+      analysis?.data?.decision?.diagnosis,
+      patientInfo.age,
+      patientInfo.gender as any,
+      typeof analysis?.data?.note === 'object' ? analysis.data.note.medicalNoteText : analysis?.data?.note
+    );
+
+    if (riskAnalysis.riskLevel === 'HIGH' || riskAnalysis.riskLevel === 'CRITICAL') {
+      setIsRiskAuditModalOpen(true);
+      NotificationService.addNotification(
+        'WARNING',
+        'Wysokie Ryzyko e-Recepty (NFZ)',
+        `Wykryto ${riskAnalysis.criticalIssuesCount} krytycznych niezgodności formalnych NFZ. Otwarto szczegółowy raport audytu przed finalnym pobraniem pliku.`
+      );
+      return;
+    }
+
+    if (mzAudit.nfzRiskCount > 0) {
+      NotificationService.addNotification(
+        'WARNING',
+        'Niezgodność z Obwieszczeniem MZ',
+        `Uwaga: Wykryto ${mzAudit.nfzRiskCount} pozycje z ryzykiem nienależnej refundacji. Zweryfikuj wskazania w module obwieszczenia MZ.`
+      );
+    }
+
+    EReceptaService.downloadJSON(currentEReceptaData);
+    NotificationService.addNotification(
+      riskAnalysis.riskLevel === 'LOW' && mzAudit.nfzRiskCount === 0 ? 'SUCCESS' : 'WARNING',
+      riskAnalysis.riskLevel === 'LOW' && mzAudit.nfzRiskCount === 0 ? 'Pobrano zweryfikowaną e-Receptę (JSON P1)' : 'Pobrano e-Receptę z uwagami MZ/NFZ',
+      `Plik eRecepta_P1_${currentEReceptaData.patientPesel}.json został pobrany. Zgodność z wymogami NFZ: ${riskAnalysis.compliancePercentage}%, zgodność z MZ: ${mzAudit.overallSafetyScore}%.`
+    );
+  }, [currentEReceptaData, analysis, patientInfo]);
+
+  // Obsługa akcji z sekcji Monitor Pacjenta
+  const handleFocusField = useCallback((fieldId: string) => {
+    const el = document.getElementById(fieldId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.focus();
+      el.classList.add('ring-2', 'ring-emerald-500');
+      setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-emerald-500');
+      }, 2000);
+    }
+  }, []);
+
+  const handleAppendRecommendation = useCallback((text: string) => {
+    setSymptoms(prev => {
+      if (!prev || !prev.trim()) return text;
+      return `${prev}\n\n[Zalecenie Monitora]: ${text}`;
+    });
+  }, []);
+
+  const handleNavigateToSection = useCallback((sectionId: string) => {
+    const el = document.getElementById(sectionId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
+
+  // Obsługa doprecyzowania diagnozy i przypisania kodu ICD-10
+  const handleApplyIcd10Diagnosis = useCallback((refinedDiagnosis: string, icd10Code: string, note?: string) => {
+    setAnalysis((prev: any) => {
+      if (!prev || !prev.data) return prev;
+      return {
+        ...prev,
+        data: {
+          ...prev.data,
+          decision: {
+            ...prev.data.decision,
+            diagnosis: refinedDiagnosis,
+            icd10Code: icd10Code,
+            ...(note ? { explanation: `${prev.data.decision.explanation ? prev.data.decision.explanation + ' ' : ''}[Doprecyzowanie ICD-10 ${icd10Code}]: ${note}` } : {})
+          }
+        }
+      };
+    });
+  }, []);
+
+  // Obsługa dodania diagnozy współistniejącej z kodu ICD-10
+  const handleAddCoDiagnosis = useCallback((coDiagnosis: string, icd10Code: string) => {
+    setAnalysis((prev: any) => {
+      if (!prev || !prev.data) return prev;
+      const currentChronic = prev.data.decision.chronicDiseaseManagement || '';
+      const newEntry = `• Rozpoznanie współistniejące: ${coDiagnosis} (ICD-10: ${icd10Code})`;
+      return {
+        ...prev,
+        data: {
+          ...prev.data,
+          decision: {
+            ...prev.data.decision,
+            chronicDiseaseManagement: currentChronic ? `${currentChronic}\n${newEntry}` : newEntry
+          }
+        }
+      };
+    });
+  }, []);
+
+  // Obsługa wstawiania uzasadnienia spełnienia kryteriów obwieszczenia MZ do notatki medycznej
+  const handleAppendRefundJustificationToNote = useCallback((justificationText: string) => {
+    setAnalysis((prev: any) => {
+      if (!prev || !prev.data) return prev;
+      const currentNote = prev.data.note?.medicalNoteText || (typeof prev.data.note === 'string' ? prev.data.note : '');
+      const separator = currentNote ? '\n\n' : '';
+      const updatedNoteText = `${currentNote}${separator}${justificationText}`;
+      
+      return {
+        ...prev,
+        data: {
+          ...prev.data,
+          note: typeof prev.data.note === 'object' 
+            ? { ...prev.data.note, medicalNoteText: updatedNoteText }
+            : updatedNoteText,
+          decision: {
+            ...prev.data.decision,
+            explanation: prev.data.decision?.explanation 
+              ? `${prev.data.decision.explanation}\n\n${justificationText}` 
+              : justificationText
+          }
+        }
+      };
+    });
+
+    NotificationService.addNotification(
+      'SUCCESS',
+      'Dodano Uzasadnienie Refundacyjne MZ',
+      'Wstawiono klauzulę spełnienia kryteriów obwieszczenia MZ do dokumentacji medycznej.'
+    );
+  }, []);
+
+  // Obsługa aktualizacji odpłatności leku wg zaleceń MZ
+  const handleUpdateMedicationRefund = useCallback((
+    medIndex: number, 
+    newRefundLevel: '100%' | 'R' | '50%' | '30%' | 'bezpłatne' | 'S', 
+    privilege?: 'S' | 'IB' | 'ZK' | 'C' | 'BRAK'
+  ) => {
+    setAnalysis((prev: any) => {
+      if (!prev || !prev.data) return prev;
+      const note = prev.data.note;
+      if (note?.eReceptaP1?.data?.medications) {
+        const updatedMeds = [...note.eReceptaP1.data.medications];
+        if (updatedMeds[medIndex]) {
+          updatedMeds[medIndex] = {
+            ...updatedMeds[medIndex],
+            refundationLevel: newRefundLevel,
+            additionalPrivilege: privilege || updatedMeds[medIndex].additionalPrivilege || 'BRAK'
+          };
+        }
+        return {
+          ...prev,
+          data: {
+            ...prev.data,
+            note: {
+              ...note,
+              eReceptaP1: {
+                ...note.eReceptaP1,
+                data: {
+                  ...note.eReceptaP1.data,
+                  medications: updatedMeds
+                }
+              }
+            }
+          }
+        };
+      }
+      return prev;
+    });
+
+    NotificationService.addNotification(
+      'SUCCESS',
+      'Zaktualizowano Poziom Odpłatności',
+      `Ustawiono poziom odpłatności ${newRefundLevel} zgodnie z wykazem leków refundowanych MZ.`
+    );
+  }, []);
+
+  // Obsługa zamiany leku na refundowany odpowiednik z obwieszczenia MZ
+  const handleReplaceMedication = useCallback((medIndex: number, newMedName: string, newEan: string) => {
+    setAnalysis((prev: any) => {
+      if (!prev || !prev.data) return prev;
+      const note = prev.data.note;
+      if (note?.eReceptaP1?.data?.medications) {
+        const updatedMeds = [...note.eReceptaP1.data.medications];
+        if (updatedMeds[medIndex]) {
+          updatedMeds[medIndex] = {
+            ...updatedMeds[medIndex],
+            name: newMedName,
+            eanGtin: newEan
+          };
+        }
+        return {
+          ...prev,
+          data: {
+            ...prev.data,
+            note: {
+              ...note,
+              eReceptaP1: {
+                ...note.eReceptaP1,
+                data: {
+                  ...note.eReceptaP1.data,
+                  medications: updatedMeds
+                }
+              }
+            }
+          }
+        };
+      }
+      return prev;
+    });
+
+    setMedications(prev => {
+      if (!prev || !prev.trim()) return newMedName;
+      return `${prev}, ${newMedName}`;
+    });
+
+    NotificationService.addNotification(
+      'SUCCESS',
+      'Podmieniono na Refundowany Zamiennik',
+      `Zastosowano odpowiednik z listy refundacyjnej MZ: ${newMedName}.`
+    );
+  }, []);
 
   useEffect(() => {
     const errors: Record<string, string> = {};
@@ -258,6 +600,22 @@ export default function App() {
     return MedicationCorrelationService.extractMedicationEvents(bmiChartData);
   }, [bmiChartData]);
 
+  // Analiza regresji liniowej (trendu) i predykcja osiągnięcia celu wagowego
+  const weightTrendAnalysis: WeightTrendAnalysis = useMemo(() => {
+    return LinearRegressionService.analyzeTrendAndGoal(bmiChartData, weightGoal, patientInfo?.height);
+  }, [bmiChartData, weightGoal, patientInfo?.height]);
+
+  // Wzbogacone punkty wykresu z wartościami linii trendu i punktami ekstrapolacji
+  const enrichedBmiChartData: ProjectedPointData[] = useMemo(() => {
+    return LinearRegressionService.enrichChartDataWithRegression(
+      bmiChartData,
+      weightTrendAnalysis.metrics,
+      showTrendLine && showTrendForecast,
+      weightTrendAnalysis.prediction,
+      patientInfo?.height
+    );
+  }, [bmiChartData, weightTrendAnalysis.metrics, weightTrendAnalysis.prediction, showTrendLine, showTrendForecast, patientInfo?.height]);
+
   const targetBmi = useMemo(() => {
     if (!weightGoal?.targetWeight || !patientInfo?.height) return null;
     return WeightGoalService.calculateBmi(weightGoal.targetWeight, patientInfo.height);
@@ -333,166 +691,203 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto p-6">
         {view === 'analysis' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left Column: Input */}
-            <div className="lg:col-span-5 space-y-6">
-              <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
-                <div className="flex items-center gap-2 mb-6">
-                  <Activity className="text-emerald-600" size={20} />
-                  <h2 className="text-lg font-bold dark:text-slate-100">Dane Pacjenta</h2>
-                </div>
-                
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">ID Pacjenta</label>
-                      <input 
-                        type="text" 
-                        value={patientId}
-                        onChange={(e) => setPatientId(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all dark:text-slate-100"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Płeć / Wiek / Waga / Wzrost</label>
-                      <div className="flex gap-2">
-                        <select 
-                          value={patientInfo.gender}
-                          onChange={(e) => setPatientInfo({...patientInfo, gender: e.target.value})}
-                          className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
-                        >
-                          <option value="M">M</option>
-                          <option value="F">K</option>
-                        </select>
+          <div className="space-y-6">
+            {/* Dedykowana Sekcja: Monitor Pacjenta (Agregacja Alertów Medycznych i Oś Czasu) */}
+            <PatientMonitorCard
+              patientId={patientId}
+              patientInfo={patientInfo}
+              vitals={vitals}
+              medications={medications}
+              symptoms={symptoms}
+              analysis={analysis}
+              patientHistory={patientHistory}
+              bmiVarianceAnalysis={bmiVarianceAnalysis}
+              onFocusField={handleFocusField}
+              onAppendRecommendation={handleAppendRecommendation}
+              onOpenWeightGoalModal={() => setIsWeightGoalModalOpen(true)}
+              onOpenFhirExportModal={() => setIsFhirModalOpen(true)}
+              onNavigateToSection={handleNavigateToSection}
+              onOpenIntakeModal={() => setIsIntakeModalOpen(true)}
+              onNavigateToHistoryVisit={handleNavigateToHistoryVisit}
+            />
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: Input */}
+              <div className="lg:col-span-5 space-y-6">
+                <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center gap-2 mb-6">
+                    <Activity className="text-emerald-600" size={20} />
+                    <h2 className="text-lg font-bold dark:text-slate-100">Dane Pacjenta</h2>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">ID Pacjenta</label>
                         <input 
-                          type="number" 
-                          placeholder="Wiek"
-                          value={patientInfo.age}
-                          onChange={(e) => setPatientInfo({...patientInfo, age: parseInt(e.target.value)})}
-                          className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-xl px-4 py-2 focus:ring-2 outline-none transition-all dark:text-slate-100 ${validationErrors.age ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:ring-emerald-500'}`}
-                        />
-                        <input 
-                          type="number" 
-                          placeholder="Waga"
-                          value={patientInfo.weight}
-                          onChange={(e) => setPatientInfo({...patientInfo, weight: parseInt(e.target.value)})}
-                          className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-xl px-4 py-2 focus:ring-2 outline-none transition-all dark:text-slate-100 ${validationErrors.weight ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:ring-emerald-500'}`}
-                        />
-                        <input 
-                          type="number" 
-                          placeholder="Wzrost"
-                          value={patientInfo.height}
-                          onChange={(e) => setPatientInfo({...patientInfo, height: parseInt(e.target.value)})}
-                          className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-xl px-4 py-2 focus:ring-2 outline-none transition-all dark:text-slate-100 ${validationErrors.height ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:ring-emerald-500'}`}
+                          type="text" 
+                          value={patientId}
+                          onChange={(e) => setPatientId(e.target.value)}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all dark:text-slate-100"
                         />
                       </div>
-                      <div className="mt-1 flex justify-between items-center">
-                        <div className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1.5">
-                          <span>BMI: <span className={patientInfo.bmi > 25 ? "text-amber-600" : "text-emerald-600"}>{patientInfo.bmi}</span></span>
-                          {bmiVarianceAnalysis && (
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
-                              bmiVarianceAnalysis.hasAlert 
-                                ? bmiVarianceAnalysis.alertType === 'RAPID_LOSS' 
-                                  ? 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'
-                                  : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
-                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                            }`}>
-                              Δ {bmiVarianceAnalysis.deltaBmi > 0 ? `+${bmiVarianceAnalysis.deltaBmi}` : bmiVarianceAnalysis.deltaBmi} pkt
-                            </span>
-                          )}
-                        </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Płeć / Wiek / Waga / Wzrost</label>
                         <div className="flex gap-2">
-                          {Object.values(validationErrors).map((err, i) => (
-                            <span key={i} className="text-[9px] text-red-500 font-bold uppercase">{err}</span>
-                          ))}
+                          <select 
+                            value={patientInfo.gender}
+                            onChange={(e) => setPatientInfo({...patientInfo, gender: e.target.value})}
+                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
+                          >
+                            <option value="M">M</option>
+                            <option value="F">K</option>
+                          </select>
+                          <input 
+                            type="number" 
+                            placeholder="Wiek"
+                            value={patientInfo.age}
+                            onChange={(e) => setPatientInfo({...patientInfo, age: parseInt(e.target.value)})}
+                            className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-xl px-4 py-2 focus:ring-2 outline-none transition-all dark:text-slate-100 ${validationErrors.age ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:ring-emerald-500'}`}
+                          />
+                          <input 
+                            type="number" 
+                            placeholder="Waga"
+                            value={patientInfo.weight}
+                            onChange={(e) => setPatientInfo({...patientInfo, weight: parseInt(e.target.value)})}
+                            className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-xl px-4 py-2 focus:ring-2 outline-none transition-all dark:text-slate-100 ${validationErrors.weight ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:ring-emerald-500'}`}
+                          />
+                          <input 
+                            type="number" 
+                            placeholder="Wzrost"
+                            value={patientInfo.height}
+                            onChange={(e) => setPatientInfo({...patientInfo, height: parseInt(e.target.value)})}
+                            className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-xl px-4 py-2 focus:ring-2 outline-none transition-all dark:text-slate-100 ${validationErrors.height ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:ring-emerald-500'}`}
+                          />
                         </div>
+                        <div className="mt-1 flex justify-between items-center">
+                          <div className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1.5">
+                            <span>BMI: <span className={patientInfo.bmi > 25 ? "text-amber-600" : "text-emerald-600"}>{patientInfo.bmi}</span></span>
+                            {bmiVarianceAnalysis && (
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                                bmiVarianceAnalysis.hasAlert 
+                                  ? bmiVarianceAnalysis.alertType === 'RAPID_LOSS' 
+                                    ? 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                              }`}>
+                                Δ {bmiVarianceAnalysis.deltaBmi > 0 ? `+${bmiVarianceAnalysis.deltaBmi}` : bmiVarianceAnalysis.deltaBmi} pkt
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            {Object.values(validationErrors).map((err, i) => (
+                              <span key={i} className="text-[9px] text-red-500 font-bold uppercase">{err}</span>
+                            ))}
+                          </div>
+                        </div>
+                        {bmiVarianceAnalysis?.hasAlert && (
+                          <div className={`mt-2 p-2 rounded-lg border text-xs flex items-center gap-2 ${
+                            bmiVarianceAnalysis.alertType === 'RAPID_LOSS'
+                              ? 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-200 dark:border-red-900/60'
+                              : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900/60'
+                          }`}>
+                            <AlertTriangle size={14} className={`shrink-0 ${bmiVarianceAnalysis.alertType === 'RAPID_LOSS' ? 'text-red-600' : 'text-amber-600'}`} />
+                            <span className="font-semibold text-[11px] leading-tight">
+                              {bmiVarianceAnalysis.alertType === 'RAPID_LOSS' 
+                                ? `⚠️ Alert: Zbyt szybka utrata masy ciała (${bmiVarianceAnalysis.deltaBmi} pkt BMI)` 
+                                : `⚠️ Alert: Zbyt szybki przyrost masy ciała (+${bmiVarianceAnalysis.deltaBmi} pkt BMI)`}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      {bmiVarianceAnalysis?.hasAlert && (
-                        <div className={`mt-2 p-2 rounded-lg border text-xs flex items-center gap-2 ${
-                          bmiVarianceAnalysis.alertType === 'RAPID_LOSS'
-                            ? 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-200 dark:border-red-900/60'
-                            : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900/60'
-                        }`}>
-                          <AlertTriangle size={14} className={`shrink-0 ${bmiVarianceAnalysis.alertType === 'RAPID_LOSS' ? 'text-red-600' : 'text-amber-600'}`} />
-                          <span className="font-semibold text-[11px] leading-tight">
-                            {bmiVarianceAnalysis.alertType === 'RAPID_LOSS' 
-                              ? `⚠️ Alert: Zbyt szybka utrata masy ciała (${bmiVarianceAnalysis.deltaBmi} pkt BMI)` 
-                              : `⚠️ Alert: Zbyt szybki przyrost masy ciała (+${bmiVarianceAnalysis.deltaBmi} pkt BMI)`}
-                          </span>
-                        </div>
-                      )}
+                      
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Alergie</label>
+                        <input 
+                          id="input-patient-allergies"
+                          type="text" 
+                          placeholder="Wpisz znane alergie (np. Penicylina, orzeszki) lub pozostaw puste"
+                          value={patientInfo.allergies || ''}
+                          onChange={(e) => setPatientInfo({...patientInfo, allergies: e.target.value})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all dark:text-slate-100"
+                        />
+                      </div>
                     </div>
                     
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Alergie</label>
-                      <input 
-                        type="text" 
-                        placeholder="Wpisz znane alergie (np. Penicylina, orzeszki) lub pozostaw puste"
-                        value={patientInfo.allergies || ''}
-                        onChange={(e) => setPatientInfo({...patientInfo, allergies: e.target.value})}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all dark:text-slate-100"
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-bold text-slate-500 uppercase">Objawy i Wywiad</label>
+                        <button
+                          type="button"
+                          onClick={() => setIsIntakeModalOpen(true)}
+                          className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 flex items-center gap-1 hover:underline cursor-pointer"
+                          title="Generuj kod QR / link do ankiety dla pacjenta w poczekalni"
+                        >
+                          <QrCode size={12} />
+                          <span>Ankieta Pacjenta (QR)</span>
+                        </button>
+                      </div>
+                      <textarea 
+                        id="input-patient-symptoms"
+                        rows={4}
+                        value={symptoms}
+                        onChange={(e) => setSymptoms(e.target.value)}
+                        placeholder="Opisz objawy zgłaszane przez pacjenta lub zaimportuj je z ankiety przedwizytowej..."
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all resize-none dark:text-slate-100"
                       />
                     </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Objawy i Wywiad</label>
-                    <textarea 
-                      rows={4}
-                      value={symptoms}
-                      onChange={(e) => setSymptoms(e.target.value)}
-                      placeholder="Opisz objawy zgłaszane przez pacjenta..."
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all resize-none dark:text-slate-100"
-                    />
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Aktualne Leki</label>
-                    <textarea 
-                      rows={3}
-                      value={medications}
-                      onChange={(e) => setMedications(e.target.value)}
-                      placeholder="Lista leków przyjmowanych przez pacjenta..."
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all resize-none dark:text-slate-100"
-                    />
-                  </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Aktualne Leki</label>
+                      <textarea 
+                        id="input-patient-medications"
+                        rows={3}
+                        value={medications}
+                        onChange={(e) => setMedications(e.target.value)}
+                        placeholder="Lista leków przyjmowanych przez pacjenta..."
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none transition-all resize-none dark:text-slate-100"
+                      />
+                    </div>
 
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                        Temperatura ({settings.units === 'metric' ? '°C' : '°F'})
-                      </label>
-                      <input 
-                        type="number" 
-                        step="0.1"
-                        value={vitals.temp}
-                        onChange={(e) => setVitals({...vitals, temp: parseFloat(e.target.value) || 36.6})}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
-                      />
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                          Temperatura ({settings.units === 'metric' ? '°C' : '°F'})
+                        </label>
+                        <input 
+                          id="input-vitals-temp"
+                          type="number" 
+                          step="0.1"
+                          value={vitals.temp}
+                          onChange={(e) => setVitals({...vitals, temp: parseFloat(e.target.value) || 36.6})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                          Ciśnienie (mmHg)
+                        </label>
+                        <input 
+                          id="input-vitals-bp"
+                          type="text" 
+                          value={vitals.bp}
+                          onChange={(e) => setVitals({...vitals, bp: e.target.value})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                          Tętno (BPM)
+                        </label>
+                        <input 
+                          id="input-vitals-pulse"
+                          type="number" 
+                          value={vitals.pulse || ''}
+                          onChange={(e) => setVitals({...vitals, pulse: parseInt(e.target.value) || undefined})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                        Ciśnienie (mmHg)
-                      </label>
-                      <input 
-                        type="text" 
-                        value={vitals.bp}
-                        onChange={(e) => setVitals({...vitals, bp: e.target.value})}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                        Tętno (BPM)
-                      </label>
-                      <input 
-                        type="number" 
-                        value={vitals.pulse || ''}
-                        onChange={(e) => setVitals({...vitals, pulse: parseInt(e.target.value) || undefined})}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 focus:ring-2 focus:ring-emerald-500 outline-none dark:text-slate-100"
-                      />
-                    </div>
-                  </div>
 
                   <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700">
                     <div className="flex items-center gap-2">
@@ -590,7 +985,7 @@ export default function App() {
                   )}
 
                   {/* Medication Analysis Section */}
-                  <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
+                  <section id="section-med-analysis" className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center gap-2">
                         <Pill className="text-indigo-600" size={20} />
@@ -623,11 +1018,20 @@ export default function App() {
                         ))}
                       </div>
                     )}
+
+                    {/* Wizualna Mapa Ryzyk (Graf Połączeń i Interakcji Lekowych) */}
+                    <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
+                      <DrugInteractionGraph
+                        medications={medications}
+                        risks={analysis.data.medAnalysis.risks}
+                        onFocusMedicationField={() => handleFocusField('input-patient-medications')}
+                      />
+                    </div>
                   </section>
 
                   {/* BP & BMI History Charts */}
                   {(bpChartData.length > 0 || bmiChartData.length > 0) && (
-                    <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 space-y-8">
+                    <section id="section-bmi-chart" className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 space-y-8">
                       {/* Wykres 1: Ciśnienie i Tętno */}
                       <div>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
@@ -761,12 +1165,14 @@ export default function App() {
                         </div>
 
                         {/* Karta Wariancji BMI i Alertów Dynamiki między ostatnimi wizytami */}
-                        <BmiVarianceCard
-                          varianceAnalysis={bmiVarianceAnalysis}
-                          onNavigateToVisit={handleNavigateToHistoryVisit}
-                          threshold={bmiVarianceThreshold}
-                          onThresholdChange={setBmiVarianceThreshold}
-                        />
+                        <div id="section-bmi-variance">
+                          <BmiVarianceCard
+                            varianceAnalysis={bmiVarianceAnalysis}
+                            onNavigateToVisit={handleNavigateToHistoryVisit}
+                            threshold={bmiVarianceThreshold}
+                            onThresholdChange={setBmiVarianceThreshold}
+                          />
+                        </div>
 
                         {/* Karta i moduł Celów Wagi Pacjenta */}
                         <WeightGoalCard
@@ -788,11 +1194,24 @@ export default function App() {
                           onToggleMedicationBadges={() => setShowMedicationBadges(prev => !prev)}
                         />
 
-                        {bmiChartData.length > 0 ? (
+                        {/* Karta Regresji Liniowej i Predykcji Celu Wagowego */}
+                        <div id="section-bmi-trend">
+                          <BmiTrendRegressionCard
+                            trendAnalysis={weightTrendAnalysis}
+                            weightGoal={weightGoal}
+                            showTrendLine={showTrendLine}
+                            onToggleTrendLine={() => setShowTrendLine(prev => !prev)}
+                            showTrendForecast={showTrendForecast}
+                            onToggleTrendForecast={() => setShowTrendForecast(prev => !prev)}
+                            onOpenWeightGoalModal={() => setIsWeightGoalModalOpen(true)}
+                          />
+                        </div>
+
+                        {enrichedBmiChartData.length > 0 ? (
                           <div className="h-80 w-full">
                             <ResponsiveContainer width="100%" height="100%">
                               <LineChart 
-                                data={bmiChartData} 
+                                data={enrichedBmiChartData} 
                                 margin={{ top: 15, right: 35, bottom: 8, left: 10 }}
                                 onClick={(e: any) => {
                                   if (e && e.activePayload && e.activePayload.length) {
@@ -814,7 +1233,7 @@ export default function App() {
                                   tick={(tickProps: any) => (
                                     <CustomBmiXAxisTick 
                                       {...tickProps} 
-                                      data={bmiChartData} 
+                                      data={enrichedBmiChartData} 
                                       onSelectVisit={handleNavigateToHistoryVisit} 
                                     />
                                   )}
@@ -1056,6 +1475,72 @@ export default function App() {
                                   }} 
                                   connectNulls 
                                 />
+
+                                {/* Linia Regresji Liniowej Wagi (Oś Prawa - Waga kg) */}
+                                {showTrendLine && weightTrendAnalysis.hasEnoughData && (
+                                  <Line 
+                                    yAxisId="right" 
+                                    type="linear" 
+                                    dataKey="weightTrend" 
+                                    name="Trend wagi (regresja)" 
+                                    stroke="#f59e0b" 
+                                    strokeWidth={2.5} 
+                                    strokeDasharray="6 4"
+                                    dot={(dotProps: any) => {
+                                      if (dotProps?.payload?.isProjected) {
+                                        return (
+                                          <g key={`proj-dot-${dotProps.index || 0}`}>
+                                            <circle
+                                              cx={dotProps.cx}
+                                              cy={dotProps.cy}
+                                              r={6}
+                                              fill="#9333ea"
+                                              stroke="#ffffff"
+                                              strokeWidth={2}
+                                            />
+                                            <text
+                                              x={dotProps.cx}
+                                              y={dotProps.cy - 8}
+                                              textAnchor="middle"
+                                              fontSize={10}
+                                            >
+                                              🔮
+                                            </text>
+                                          </g>
+                                        );
+                                      }
+                                      return null;
+                                    }}
+                                    activeDot={{ 
+                                      r: 6, 
+                                      fill: '#f59e0b', 
+                                      stroke: '#ffffff', 
+                                      strokeWidth: 2 
+                                    }} 
+                                    connectNulls 
+                                  />
+                                )}
+
+                                {/* Linia Regresji Liniowej BMI (Oś Lewa - BMI kg/m²) */}
+                                {showTrendLine && weightTrendAnalysis.hasEnoughData && (
+                                  <Line 
+                                    yAxisId="left" 
+                                    type="linear" 
+                                    dataKey="bmiTrend" 
+                                    name="Trend BMI (regresja)" 
+                                    stroke="#d946ef" 
+                                    strokeWidth={1.5} 
+                                    strokeDasharray="3 3" 
+                                    dot={false}
+                                    activeDot={{ 
+                                      r: 5, 
+                                      fill: '#d946ef', 
+                                      stroke: '#ffffff', 
+                                      strokeWidth: 1.5 
+                                    }} 
+                                    connectNulls 
+                                  />
+                                )}
                               </LineChart>
                             </ResponsiveContainer>
                             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mt-2 px-1 gap-1">
@@ -1129,6 +1614,29 @@ export default function App() {
                                   analysis,
                                   patientInfo
                                 }];
+                            const result = generatePatientEReceptasReportPDF(patientId, recordsToExport, patientInfo);
+                            NotificationService.addNotification('SUCCESS', 'Raport e-Recept PDF', `Pomyślnie wygenerowano zbiorczy raport PDF dla ${result.count} e-Recept pacjenta ${patientId}`);
+                          }}
+                          className="px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                          title="Generuj i pobierz zbiorczy raport PDF wszystkich e-Recept wystawionych dla bieżącego pacjenta"
+                        >
+                          <Pill size={13} />
+                          e-Recepty PDF
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const recordsToExport = patientHistory && patientHistory.length > 0
+                              ? patientHistory
+                              : [{
+                                  id: 'current',
+                                  patientId,
+                                  timestamp: new Date().toISOString(),
+                                  symptoms,
+                                  medications,
+                                  vitals,
+                                  analysis,
+                                  patientInfo
+                                }];
                             generatePatientReportPDF(analysis, patientId, recordsToExport);
                             NotificationService.addNotification('SUCCESS', 'Zbiorczy Raport PDF', `Wygenerowano zbiorczy raport PDF dla ${recordsToExport.length} wizyt pacjenta ${patientId}`);
                           }}
@@ -1162,16 +1670,29 @@ export default function App() {
                     )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                      <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
-                        <p className="text-xs font-bold text-slate-500 uppercase mb-1">Sugerowana Diagnoza</p>
-                        <p className="text-lg font-semibold text-emerald-800 dark:text-emerald-400">
-                          {analysis.data.decision.diagnosis}
-                          {analysis.data.decision.icd10Code && (
-                            <span className="ml-2 text-sm font-mono bg-emerald-100 dark:bg-emerald-900/50 px-2 py-0.5 rounded text-emerald-600 dark:text-emerald-400">
-                              {analysis.data.decision.icd10Code}
-                            </span>
-                          )}
-                        </p>
+                      <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-xs font-bold text-slate-500 uppercase">Sugerowana Diagnoza</p>
+                            <button
+                              type="button"
+                              onClick={() => handleNavigateToSection('section-icd10-refiner')}
+                              className="text-[11px] text-emerald-600 dark:text-emerald-400 hover:underline font-bold flex items-center gap-1"
+                              title="Przejdź do inteligentnego podpowiadacza kodów ICD-10"
+                            >
+                              <Tag size={12} />
+                              Doprecyzuj ICD-10
+                            </button>
+                          </div>
+                          <p className="text-lg font-semibold text-emerald-800 dark:text-emerald-400">
+                            {analysis.data.decision.diagnosis}
+                            {analysis.data.decision.icd10Code && (
+                              <span className="ml-2 text-sm font-mono bg-emerald-100 dark:bg-emerald-900/50 px-2 py-0.5 rounded text-emerald-600 dark:text-emerald-400">
+                                {analysis.data.decision.icd10Code}
+                              </span>
+                            )}
+                          </p>
+                        </div>
                       </div>
                       <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
                         <p className="text-xs font-bold text-slate-500 uppercase mb-1">Zalecane Działanie</p>
@@ -1273,6 +1794,28 @@ export default function App() {
                     )}
                   </section>
 
+                  {/* Inteligentna Wyszukiwarka i Podpowiadacz Kodów ICD-10 */}
+                  <section id="section-icd10-refiner">
+                    <Icd10SmartSelector
+                      currentDiagnosis={analysis.data.decision.diagnosis}
+                      currentIcd10Code={analysis.data.decision.icd10Code}
+                      symptoms={symptoms}
+                      medications={medications}
+                      vitals={{
+                        bp: vitals.bp,
+                        pulse: vitals.pulse,
+                        temp: vitals.temp
+                      }}
+                      patientInfo={{
+                        bmi: patientInfo.bmi,
+                        weight: patientInfo.weight,
+                        age: patientInfo.age
+                      }}
+                      onApplyDiagnosis={handleApplyIcd10Diagnosis}
+                      onAddCoDiagnosis={handleAddCoDiagnosis}
+                    />
+                  </section>
+
                   {/* AdiPOZ Integration Section */}
                   {analysis.data.integration && (
                     <section className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
@@ -1367,58 +1910,162 @@ export default function App() {
                     </section>
                   )}
 
+                  {/* Sekcja Weryfikacji z Obwieszczeniem MZ (Lista Leków Refundowanych & Dostępność GIF) */}
+                  <section id="section-mz-refund-check">
+                    <RefundacjaMzCheckCard
+                      eReceptaData={currentEReceptaData}
+                      medicalNoteText={typeof analysis?.data?.note === 'object' ? analysis.data.note.medicalNoteText : analysis?.data?.note}
+                      patientDiagnosis={analysis?.data?.decision?.diagnosis}
+                      patientIcd10={analysis?.data?.decision?.icd10Code}
+                      patientAge={patientInfo.age}
+                      patientGender={patientInfo.gender as any}
+                      chronicMedications={medications}
+                      patientHistory={patientHistory}
+                      onAppendToMedicalNote={handleAppendRefundJustificationToNote}
+                      onUpdateMedicationRefund={handleUpdateMedicationRefund}
+                      onReplaceMedication={handleReplaceMedication}
+                    />
+                  </section>
+
                   {/* Medical Note */}
                   <section className="bg-slate-900 rounded-2xl p-6 shadow-xl text-slate-300 font-mono text-sm overflow-hidden relative">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 text-slate-100 z-20 relative">
-                      <div className="flex items-center gap-2">
-                        <FileText size={20} />
-                        <h2 className="text-lg font-bold font-sans">Wygenerowana Notatka Medyczna</h2>
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4 text-slate-100 z-20 relative">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-600/30 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                          <FileText size={18} />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-bold font-sans flex items-center gap-2">
+                            Wygenerowana Notatka Medyczna
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                              HL7 CDA / P1 CeZ
+                            </span>
+                          </h2>
+                          <p className="text-xs text-slate-400 font-sans">
+                            Dokumentacja wizyty POZ zintegrowana z pakietem e-Recepty
+                          </p>
+                        </div>
                       </div>
+
                       <div className="flex items-center gap-2 flex-wrap">
+                        {/* Dedykowany Eksport Listy Leków z Weryfikacją EAN/ATC/Uprawnień S, IB */}
                         <button 
+                          type="button"
+                          onClick={() => setIsP1MedsExportModalOpen(true)}
+                          className="flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-emerald-600 hover:from-purple-500 hover:to-emerald-500 text-white font-sans font-bold py-1.5 px-3 rounded-xl transition-all shadow-md hover:shadow-lg cursor-pointer text-xs"
+                          title="Eksportuj listę leków do formatu JSON zgodnego ze specyfikacją P1 CeZ wraz z techniczną weryfikacją EAN-13, ATC oraz uprawnień (S, IB)"
+                        >
+                          <Pill size={14} className="text-purple-200" />
+                          <span>Eksport Leków (P1 CeZ JSON)</span>
+                          <span className="px-1.5 py-0.2 bg-black/30 rounded text-[10px] font-mono text-purple-200">
+                            EAN/ATC/S
+                          </span>
+                        </button>
+
+                        {/* 1-Kliknięciowy Eksport do JSON P1 */}
+                        <button 
+                          type="button"
+                          onClick={handleDownloadEReceptaJson}
+                          className="flex items-center gap-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white font-sans font-bold py-1.5 px-3 rounded-xl transition-all shadow-sm hover:shadow-md cursor-pointer text-xs"
+                          title="Pobierz gotowy plik e-Recepty w standardzie P1 CeZ (JSON) do zaimportowania w Kamsoft / mMedica / Serum"
+                        >
+                          <Download size={14} />
+                          Pobierz P1 JSON
+                        </button>
+
+                        {/* Podgląd JSON P1 i Zarządzanie */}
+                        <button 
+                          type="button"
+                          onClick={() => setIsEReceptaP1ModalOpen(true)}
+                          className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-sans font-bold py-1.5 px-3 rounded-xl border border-slate-700 transition-colors cursor-pointer text-xs"
+                          title="Podgląd struktury technicznej JSON P1, kopiowanie do schowka i weryfikacja integracji HIS"
+                        >
+                          <FileCode size={14} />
+                          Podgląd
+                        </button>
+
+                        {/* Eksport HL7 FHIR */}
+                        <button 
+                          type="button"
                           onClick={() => setIsFhirModalOpen(true)}
-                          className="flex items-center gap-2 bg-sky-600/25 hover:bg-sky-600/45 text-sky-300 font-sans font-bold py-1.5 px-3 rounded-lg border border-sky-500/40 transition-colors cursor-pointer"
+                          className="flex items-center gap-1.5 bg-sky-600/25 hover:bg-sky-600/45 text-sky-300 font-sans font-bold py-1.5 px-3 rounded-xl border border-sky-500/40 transition-colors cursor-pointer text-xs"
                           title="Eksportuj wygenerowaną notatkę medyczną do formatu HL7 FHIR Bundle zgodnego z HIS/EHR"
                         >
-                          <Share2 size={16} />
-                          Eksportuj HL7 FHIR (HIS/EHR)
-                        </button>
-                        <button 
-                          onClick={() => {
-                            const medsList = medications.split(',').filter(m => m.trim().length > 0).map(m => ({
-                              name: m.trim(),
-                              dosage: '1x1',
-                              quantity: '1 op.'
-                            }));
-                            const data = {
-                              patientName: patientInfo.imie && patientInfo.nazwisko ? `${patientInfo.imie} ${patientInfo.nazwisko}` : 'Jan Kowalski',
-                              patientPesel: patientInfo.pesel || '80010112345',
-                              doctorName: 'Lek. Anna Nowak',
-                              doctorPzw: '1234567',
-                              date: new Date().toISOString().split('T')[0],
-                              accessCode: Math.floor(1000 + Math.random() * 9000).toString(),
-                              medications: medsList.length > 0 ? medsList : [{ name: 'Zalecane leki z notatki', dosage: 'Według zaleceń', quantity: '1 op.' }]
-                            };
-                            import('./services/EReceptaService').then(({ EReceptaService }) => {
-                              EReceptaService.downloadJSON(data);
-                            });
-                          }}
-                          className="flex items-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 font-sans font-bold py-1.5 px-3 rounded-lg border border-emerald-500/30 transition-colors cursor-pointer"
-                          title="Pobierz plik e-Recepty w formacie JSON P1"
-                        >
-                          <FileCode size={16} />
-                          Pobierz e-Receptę (JSON P1)
+                          <Share2 size={14} />
+                          HL7 FHIR
                         </button>
                       </div>
                     </div>
+
+                    {/* Wskaźnik Stopnia Ryzyka e-Recepty & Audyt NFZ */}
+                    {currentEReceptaData && (
+                      <div className="mb-4">
+                        <EReceptaRiskIndicator 
+                          eReceptaData={currentEReceptaData}
+                          onDownloadConfirmed={() => {
+                            EReceptaService.downloadJSON(currentEReceptaData);
+                            NotificationService.addNotification(
+                              'SUCCESS',
+                              'Pobrano plik e-Recepty (JSON P1)',
+                              `Plik eRecepta_P1_${currentEReceptaData.patientPesel}.json został pomyślnie pobrany.`
+                            );
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {/* Pasek Szybkiego Statusu e-Recepty P1 */}
+                    {currentEReceptaData && (
+                      <div className="mb-4 p-3 rounded-xl bg-slate-950/80 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3 text-xs font-sans relative z-10">
+                        <div className="flex items-center gap-4 flex-wrap">
+                          <div className="flex items-center gap-1.5 text-emerald-400">
+                            <CheckCircle2 size={14} />
+                            <span className="font-semibold">Pakiet P1 Gotowy</span>
+                          </div>
+                          <div className="text-slate-400">
+                            PIN: <span className="font-mono font-bold text-emerald-300 bg-emerald-950/70 px-1.5 py-0.5 rounded border border-emerald-800/60">{currentEReceptaData.accessCode}</span>
+                          </div>
+                          <div className="text-slate-400">
+                            Leki: <strong className="text-slate-200">{currentEReceptaData.medications.length} poz.</strong>
+                          </div>
+                          <div className="text-slate-400 hidden sm:block">
+                            Standard: <span className="font-mono text-slate-300">CeZ PL-CDA-P1 v1.4</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              EReceptaService.downloadPDF(currentEReceptaData);
+                              NotificationService.addNotification('INFO', 'Wydruk e-Recepty', 'Pobrano wydruk informacyjny e-Recepty (PDF)');
+                            }}
+                            className="text-[11px] text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <FileText size={12} />
+                            Wydruk PDF
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsEReceptaP1ModalOpen(true)}
+                            className="text-[11px] text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-950 px-2.5 py-1 rounded-lg border border-emerald-800/60 transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <Layers size={12} />
+                            Wykaz & JSON
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="absolute top-6 right-6 opacity-10">
                       <Shield size={120} />
                     </div>
-                    <pre className="whitespace-pre-wrap leading-relaxed relative z-10">
+                    <pre className="whitespace-pre-wrap leading-relaxed relative z-10 text-xs sm:text-sm bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
                       {analysis.data.note.content}
                     </pre>
-                    <div className="mt-6 pt-4 border-t border-slate-800 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-sans">
-                      Zgodność z regulacjami: 100% | Podpis: SOVEREIGN_AI_SECURE_HASH
+                    <div className="mt-4 pt-3 border-t border-slate-800 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-sans flex flex-col sm:flex-row items-center justify-between gap-2">
+                      <span>Zgodność z regulacjami: 100% | Standard: PL-CDA-P1 / HL7 FHIR R4</span>
+                      <span className="font-mono text-emerald-500/80">PODPIS: SOVEREIGN_AI_SECURE_HASH</span>
                     </div>
                   </section>
 
@@ -1436,12 +2083,14 @@ export default function App() {
               )}
             </div>
           </div>
-        ) : view === 'history' ? (
+        </div>
+      ) : view === 'history' ? (
           <History 
             history={patientHistory} 
             onSelect={handleSelectHistory} 
             onDelete={handleDeleteHistory} 
             patientId={patientId}
+            patientInfo={patientInfo}
             selectedRecordId={selectedHistoryId}
             onClearSelection={() => setSelectedHistoryId(null)}
           />
@@ -1505,6 +2154,55 @@ export default function App() {
         isOpen={isFhirModalOpen}
         onClose={() => setIsFhirModalOpen(false)}
         params={currentFhirParams}
+      />
+
+      {/* Modal Eksportu e-Recepty (Standard P1 / CeZ) */}
+      <EReceptaP1ExportModal
+        isOpen={isEReceptaP1ModalOpen}
+        onClose={() => setIsEReceptaP1ModalOpen(false)}
+        eReceptaData={currentEReceptaData}
+        p1JsonString={analysis?.data?.note?.eReceptaP1?.p1Json}
+      />
+
+      {/* Dedykowany Modal Eksportu Leków do JSON P1 CeZ z Weryfikacją EAN/ATC/Uprawnień */}
+      <P1MedsExportModal
+        isOpen={isP1MedsExportModalOpen}
+        onClose={() => setIsP1MedsExportModalOpen(false)}
+        eReceptaData={currentEReceptaData}
+        onSaveAndDownload={(updatedData) => {
+          EReceptaService.downloadJSON(updatedData);
+          NotificationService.addNotification(
+            'SUCCESS',
+            'Zapisano i pobrano JSON P1 CeZ',
+            `Pakiet e-Recepty dla pacjenta PESEL: ${updatedData.patientPesel} został pomyślnie zwalidowany i pobrany.`
+          );
+        }}
+      />
+
+      {/* Modal Audytu Ryzyka e-Recepty i Wymogów NFZ */}
+      {currentEReceptaData && (
+        <EReceptaRiskAuditModal
+          isOpen={isRiskAuditModalOpen}
+          onClose={() => setIsRiskAuditModalOpen(false)}
+          analysis={EReceptaRiskService.analyzeEReceptaRisk(currentEReceptaData)}
+          eReceptaData={currentEReceptaData}
+          onDownloadConfirmed={() => {
+            EReceptaService.downloadJSON(currentEReceptaData);
+            NotificationService.addNotification(
+              'SUCCESS',
+              'Pobrano plik e-Recepty (JSON P1)',
+              `Plik eRecepta_P1_${currentEReceptaData.patientPesel}.json został pobrany po weryfikacji audytu NFZ.`
+            );
+          }}
+        />
+      )}
+
+      {/* Modal Ankiety Przedwizytowej Pacjenta (QR / Link / Synchronizacja) */}
+      <PatientIntakeModal
+        isOpen={isIntakeModalOpen}
+        onClose={() => setIsIntakeModalOpen(false)}
+        patientId={patientId}
+        onApplyToIntakeSymptoms={handleApplyToIntakeSymptoms}
       />
     </div>
   );

@@ -92,7 +92,7 @@ export class SystemOrchestrator {
     }
 
     // 9. MedicalNoteGenerator
-    const note = this.noteGenerator.generate(patientId, decision, symptoms);
+    const note = this.noteGenerator.generate(patientId, decision, symptoms, medications, patientInfo);
     
     // 10. Prepare full analysis object
     const fullAnalysis = {

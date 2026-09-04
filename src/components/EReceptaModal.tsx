@@ -67,9 +67,9 @@ export default function EReceptaModal({ isOpen, onClose, analysisData, patientIn
 
   if (!isOpen) return null;
 
-  const handleMedChange = (index: number, field: keyof EReceptaMedication, value: string) => {
+  const handleMedChange = (index: number, field: keyof EReceptaMedication, value: any) => {
     const updated = [...data.medications];
-    updated[index][field] = value;
+    (updated[index] as any)[field] = value;
     setData({ ...data, medications: updated });
   };
 

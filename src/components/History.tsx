@@ -1,9 +1,9 @@
 import React, { memo, useEffect, useRef } from 'react';
-import { History as HistoryIcon, Calendar, Activity, Pill, ChevronRight, Trash2, FileText, FileSpreadsheet, Target, X, CheckCircle2 } from 'lucide-react';
+import { History as HistoryIcon, Calendar, Activity, Pill, ChevronRight, Trash2, FileText, FileSpreadsheet, Target, X, CheckCircle2, Download } from 'lucide-react';
 import { AnalysisRecord } from '../services/LocalPatientDB';
 import { cn } from '../lib/utils';
 import { exportAndDownloadHistory, exportAndDownloadSingleVisit } from '../lib/csvExporter';
-import { generatePatientReportPDF } from '../lib/pdfGenerator';
+import { generatePatientReportPDF, generatePatientEReceptasReportPDF } from '../lib/pdfGenerator';
 import { NotificationService } from '../services/NotificationService';
 
 interface HistoryProps {
@@ -11,6 +11,7 @@ interface HistoryProps {
   onSelect: (record: AnalysisRecord) => void;
   onDelete: (id: string) => void;
   patientId?: string;
+  patientInfo?: any;
   selectedRecordId?: string | null;
   onClearSelection?: () => void;
 }
@@ -20,15 +21,18 @@ const HistoryItem = memo(({
   onSelect, 
   onDelete, 
   isSelected,
-  itemRef 
+  itemRef,
+  patientInfo
 }: { 
   record: AnalysisRecord; 
   onSelect: (record: AnalysisRecord) => void; 
   onDelete: (id: string) => void;
   isSelected?: boolean;
   itemRef?: React.RefObject<HTMLDivElement>;
+  patientInfo?: any;
 }) => {
   const bmiVal = record.patientInfo?.bmi || (record.patientInfo?.weight && record.patientInfo?.height ? parseFloat((record.patientInfo.weight / Math.pow(record.patientInfo.height / 100, 2)).toFixed(1)) : null);
+  const hasMeds = Boolean(record.medications || record.analysis?.data?.eReceptaData || record.analysis?.eReceptaData);
 
   return (
     <div 
@@ -79,6 +83,22 @@ const HistoryItem = memo(({
             )}
           </div>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+            {hasMeds && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const pid = record.patientId || 'pacjent';
+                  const result = generatePatientEReceptasReportPDF(pid, [record], record.patientInfo || patientInfo);
+                  NotificationService.addNotification('SUCCESS', 'e-Recepta PDF', `Wygenerowano raport PDF e-Recept dla wizyty z dnia ${new Date(record.timestamp).toLocaleDateString()}`);
+                }}
+                className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-teal-600 dark:hover:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 rounded-lg transition-all"
+                title="Pobierz PDF e-Recepty z tej wizyty"
+                aria-label="Pobierz PDF e-Recepty z tej wizyty"
+              >
+                <Pill size={14} aria-hidden="true" />
+              </button>
+            )}
             <button
               type="button"
               onClick={(e) => {
@@ -167,7 +187,7 @@ const HistoryItem = memo(({
 
 HistoryItem.displayName = 'HistoryItem';
 
-export function History({ history, onSelect, onDelete, patientId, selectedRecordId, onClearSelection }: HistoryProps) {
+export function History({ history, onSelect, onDelete, patientId, patientInfo, selectedRecordId, onClearSelection }: HistoryProps) {
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -225,6 +245,26 @@ export function History({ history, onSelect, onDelete, patientId, selectedRecord
           </span>
         </div>
         <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+          {/* Przycisk szybkiego generowania i pobrania zbiorczego raportu PDF wszystkich e-Recept */}
+          <button
+            type="button"
+            onClick={() => {
+              const pid = patientId || history[0]?.patientId || 'pacjent';
+              const result = generatePatientEReceptasReportPDF(pid, history, patientInfo);
+              NotificationService.addNotification(
+                'SUCCESS', 
+                'Raport e-Recept PDF', 
+                `Pomyślnie wygenerowano i pobrano zbiorczy raport PDF dla ${result.count} e-Recept pacjenta ${pid} (plik: ${result.filename})`
+              );
+            }}
+            className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-xs font-bold py-2 px-3 rounded-xl shadow-sm hover:shadow-md transition-all border border-teal-500/30"
+            title="Szybkie generowanie i pobranie zbiorczego raportu PDF wszystkich e-Recept pacjenta z kodami PIN i terminami ważności"
+            aria-label="Generuj zbiorczy raport PDF wszystkich e-Recept"
+          >
+            <Pill size={14} className="text-teal-100" />
+            <span>Zbiorczy Raport e-Recept PDF</span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -262,9 +302,10 @@ export function History({ history, onSelect, onDelete, patientId, selectedRecord
               <HistoryItem 
                 record={record} 
                 onSelect={onSelect} 
-                onDelete={onDelete}
+                onDelete={onDelete} 
                 isSelected={isSelected}
                 itemRef={isSelected ? selectedItemRef : undefined}
+                patientInfo={patientInfo}
               />
             </div>
           );
@@ -273,3 +314,4 @@ export function History({ history, onSelect, onDelete, patientId, selectedRecord
     </div>
   );
 }
+
